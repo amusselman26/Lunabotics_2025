@@ -6,6 +6,13 @@ import depthai as dai # this is the oak-d-lite computer
 
 from dash import html
 
+'''
+TODO: 1. add multiple cameras
+2. add index.html file
+3. add map
+4. ensure video stream works when unplugging and plugging the camera
+'''
+
 def simple_layout():
     return html.Div([
             html.Iframe(src="/video_feed", width="1200", height="800", id="video-stream"),
