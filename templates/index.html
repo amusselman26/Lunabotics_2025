@@ -1,0 +1,60 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Rover Control Center</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.4.1/socket.io.js"></script>
+    <script src="https://unpkg.com/leaflet@1.9.3/dist/leaflet.js"></script>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.3/dist/leaflet.css"/>
+    <style>
+        body { display: flex; flex-direction: column; align-items: center; }
+        #video-container { display: flex; gap: 20px; margin-bottom: 20px; }
+        iframe { width: 600px; height: 400px; }
+        #map { height: 600px; width: 800px; }
+    </style>
+</head>
+<body>
+    <h1>Rover Control Center</h1>
+    <div id="video-container">
+        <iframe src="/video_feed/1" id="video-stream1"></iframe>
+        <iframe src="/video_feed/2" id="video-stream2"></iframe>
+    </div>
+    <div id="map"></div>
+
+    <script>
+        var socket = io();
+        var map = L.map('map').setView([0, 0], 5);
+        
+        // Define arena boundaries and zones
+        var arenaBounds = [[0, 0], [6.88, 5.38]];
+        L.rectangle(arenaBounds, {color: "black", weight: 2}).addTo(map);
+        
+        var excavationZone = [[3, 0], [6.88, 5.38]];
+        L.rectangle(excavationZone, {color: "blue", weight: 1, fillOpacity: 0.3}).addTo(map);
+        
+        var berm = [[5, 2], [7, 2.7]];
+        L.rectangle(berm, {color: "red", weight: 2, fillOpacity: 0.3}).addTo(map);
+        
+        // Rover icon with rotation capability
+        var roverIcon = L.icon({
+            iconUrl: 'https://upload.wikimedia.org/wikipedia/commons/3/3c/Arrow_Up.svg',
+            iconSize: [30, 30],
+            iconAnchor: [15, 15]
+        });
+
+        var roverMarker = L.marker([0, 0], {icon: roverIcon}).addTo(map);
+        var obstacles = [];
+
+        socket.on('update_map', function(data) {
+            roverMarker.setLatLng([data.x, data.y]);
+
+            // Apply rotation using Leaflet's setRotationAngle
+            document.querySelector(".leaflet-marker-icon").style.transform = `rotate(${data.theta}deg)`;
+
+            obstacles.forEach(o => map.removeLayer(o));
+            obstacles = data.obstacles.map(o => L.circle([o.x, o.y], {radius: 0.5, color: 'red'}).addTo(map));
+        });
+    </script>
+</body>
+</html>
