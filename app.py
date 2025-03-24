@@ -1,60 +1,44 @@
-import dash
-from flask import Response
-
 import cv2
-import depthai as dai # this is the oak-d-lite computer
+import depthai as dai
+from flask import Flask, Response, render_template
 
-from dash import html
+app = Flask(__name__)
 
-'''
-TODO: 1. add multiple cameras
-2. add index.html file
-3. add map
-4. ensure video stream works when unplugging and plugging the camera
-'''
-
-def simple_layout():
-    return html.Div([
-            html.Iframe(src="/video_feed", width="1200", height="800", id="video-stream"),
-            ], style={'width': '100%', 'display': 'flex', 'justify-content': 'center', 'align-items': 'center'}
-            )
-
-app = dash.Dash(__name__)
-app.layout = simple_layout()
-
-def generate():
+def generate(camera_id):
     pipeline = dai.Pipeline()
-
-    # Create the ColorCamera node and set its properties
     camRgb = pipeline.create(dai.node.ColorCamera)
-    camRgb.setBoardSocket(dai.CameraBoardSocket.CAM_A)
+    
+    if camera_id == 1:
+        camRgb.setBoardSocket(dai.CameraBoardSocket.CAM_A)
+    else:
+        camRgb.setBoardSocket(dai.CameraBoardSocket.CAM_B)
+
     camRgb.setResolution(dai.ColorCameraProperties.SensorResolution.THE_1080_P)
-
-    # Create the XLinkOut node for the video stream and set its properties
+    
     xoutRgb = pipeline.create(dai.node.XLinkOut)
-    xoutRgb.setStreamName("My first stream")
-
-    # Link the ColorCamera to the XLinkOut node
+    xoutRgb.setStreamName(f"video{camera_id}")
     camRgb.video.link(xoutRgb.input)
 
-    # Start the pipeline
     with dai.Device(pipeline) as device:
-        video_queue = device.getOutputQueue(name="My first stream", maxSize=4, blocking=False) # get the video stream queue
+        video_queue = device.getOutputQueue(name=f"video{camera_id}", maxSize=4, blocking=False)
         
         while True:
-            frame = video_queue.get().getCvFrame() # get the video frame
+            frame = video_queue.get().getCvFrame()
+            if frame is None:
+                continue
 
-          # <you can add fancy processing of the video frame here>
-
-            (flag, encodedImage) = cv2.imencode(".jpg", frame) # encode the frame into a jpeg image
+            (flag, encodedImage) = cv2.imencode(".jpg", frame)
             if not flag:
                 continue
-            yield(b'--frame\r\n' b'Content-Type: image/jpeg\r\n\r\n' + bytearray(encodedImage) + b'\r\n')
+            yield (b'--frame\r\n' b'Content-Type: image/jpeg\r\n\r\n' + bytearray(encodedImage) + b'\r\n')
 
+@app.route("/")
+def index():
+    return render_template("index.html")
 
-@app.server.route("/video_feed")
-def video_feed():
-    return Response(generate(), mimetype = "multipart/x-mixed-replace; boundary=frame")
+@app.route("/video_feed/<int:camera_id>")
+def video_feed(camera_id):
+    return Response(generate(camera_id), mimetype="multipart/x-mixed-replace; boundary=frame")
 
 if __name__ == "__main__":
-    app.run(host='0.0.0.0', port=5000, debug=True)
+    app.run(host="0.0.0.0", port=5000, debug=True)
