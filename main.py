@@ -6,6 +6,7 @@ import depthai as dai
 import contextlib
 import time
 import math
+from pysabertooth import Sabertooth
 
 ''' TODO:
 1. check theta returned from aruco detection is accurate
@@ -17,20 +18,41 @@ import math
 7. add object detection behavior to waypoints
 8. 
 '''
-
-WAYPOINTS = [[-4, -4.8, "mine"], [-0.6, -5.38, "deposit"], [-4, -5.0, "mine"]] # Waypoints for the robot to follow
-
-# Camera intrinsic parameters (example for OAK-D Lite, adjust as needed)
-fx = 1515.24261837315  # Focal length x
-fy = 1513.21547841726  # Focal length y
-cx = 986.009156502993   # Optical center x
-cy = 551.618039270305   # Optical center y
-camera_matrix = np.array([[fx, 0, cx],
-                           [0, fy, cy],
+# Camera intrinsic parameters (from Matlab) for (left or right) oak-d-lite
+fx1 = 1515.24261837315  # Focal length x
+fy1 = 1513.21547841726  # Focal length y
+cx1 = 986.009156502993   # Optical center x
+cy1 = 551.618039270305   # Optical center y
+camera_matrix1 = np.array([[fx1, 0, cx1],
+                           [0, fy1, cy1],
                            [0, 0, 1]], dtype=float)
 
-# Distortion coefficients (assumed negligible for simplicity)
-dist_coeffs = np.array((0.114251294509202,-0.228889968220235,0,0))
+# Distortion coefficients for (left or right) oak-d-lite
+dist_coeffs1 = np.array((0.114251294509202,-0.228889968220235,0,0))
+
+relative_position1 = [0.145, 0, 0] # Relative position of the camera with respect to the robot base (X, Y, Theta)
+relative_position2 = [-0.145, 0, 180]  # Relative position of the camera with respect to the robot base (X, Y, Theta)
+
+# Camera intrinsic parameters for the other (left or right) oak-d-lite (assumed the same for both cameras for now (03/18/25) update when other cameras are calibrated)
+fx2 = 1515.24261837315  # Focal length x
+fy2 = 1513.21547841726  # Focal length y
+cx2 = 986.009156502993   # Optical center x
+cy2 = 551.618039270305   # Optical center y
+camera_matrix2 = np.array([[fx2, 0, cx2],
+                           [0, fy2, cy2],
+                           [0, 0, 1]], dtype=float)
+
+# Distortion coefficients for (left or right) oak-d-lite
+dist_coeffs2 = np.array((0.114251294509202,-0.228889968220235,0,0))
+
+
+
+CAMERA_INFOS = {
+ "14442C10911DC5D200" : {"camera_matrix" : camera_matrix1, "dist_coeffs" : dist_coeffs1, "relative_position" : relative_position1},
+ "14442C1071EDDFD600" : {"camera_matrix" : camera_matrix2, "dist_coeffs" : dist_coeffs2, "relative_position" : relative_position2}
+}
+
+WAYPOINTS = [[1, -2, "mine"], [1, -1, "deposit"]] # Waypoints for the robot to follow
 
 marker_size = 0.11
 
@@ -103,7 +125,7 @@ def createPipeline():
 def timeDeltaToMilliS(delta) -> float:
         return delta.total_seconds() * 1000
 
-def localize(qRgbMap, imuQueue, aruco_detector, camera_matrix, dist_coeffs, marker_size, baseTs, prev_gyroTs, pose, camera_position):
+def localize(qRgbMap, imuQueue, aruco_detector, marker_size, baseTs, prev_gyroTs, camera_position, pose):
     last_print_time = time.time()  # Initialize time tracking
     localizationInitializing = True
     for q_rgb, stream_name, mxId in qRgbMap:
@@ -118,6 +140,9 @@ def localize(qRgbMap, imuQueue, aruco_detector, camera_matrix, dist_coeffs, mark
 
             # Detect ArUco markers
             corners, ids, _ = aruco_detector.detectMarkers(gray_image)
+
+            camera_matrix = CAMERA_INFOS[str(mxId)]["camera_matrix"]
+            dist_coeffs = CAMERA_INFOS[str(mxId)]["dist_coeffs"]
 
             # Process each detected marker and get pose relative to id 2
             if ids is not None and 2 in ids:
@@ -139,8 +164,10 @@ def localize(qRgbMap, imuQueue, aruco_detector, camera_matrix, dist_coeffs, mark
                 R_inv = rotation_matrix.T  # Inverse of the rotation matrix
                 camera_position = R_inv @ tvec[0]  # @ is the matrix multiplication operator in Python
                 theta = np.arcsin(-R_inv[2][0])
+                theta =np.degrees(theta)  # Convert radians to degrees for readability
 
-                pose = [camera_position[0][0], camera_position[2][0], np.degrees(theta)]
+                pose = [camera_position[0][0], camera_position[2][0], theta]  # Pose in the format [x, y, theta]
+                pose = pose + np.array(CAMERA_INFOS[str(mxId)]["relative_position"])  # Adjust pose based on relative position of the camera
 
             elif camera_position is not None:
                 for imuPacket in imuPackets:
@@ -181,28 +208,75 @@ def localize(qRgbMap, imuQueue, aruco_detector, camera_matrix, dist_coeffs, mark
     return pose, localizationInitializing, baseTs, prev_gyroTs, camera_position
 
 def turn_to(theta):
+    turn_motion(20)  # Adjust speed as necessary for turning, 20 is an example speed
     print(f"Turning to {theta}")
-    pass
 
 def move_to(current_position, target_position):
     theta = math.degrees(math.atan2(target_position[1] - current_position[1], target_position[0] - current_position[0]))
     if abs(current_position[2] - theta) > 5:
         turn_to(theta)
     else:
+        linear_motion(20)
         print("Moving forward")
-        pass
 
-def excavate():
-    excavate_time = 5
-    initial_time = time.time()
+
+def excavate(initial_time):
+    excavate_time = 5  # Duration of excavation in seconds
     if time.time() - initial_time < excavate_time:
         print("Excavating")
+        return False  # Excavation is still in progress
+    else: 
+        print("Excavation complete")
+        return True 
 
-def deposit():
+def deposit(initial_time):
     deposit_time = 5
-    initial_time = time.time()
     if time.time() - initial_time < deposit_time:
         print("Depositing")
+        return False
+    else:
+        print("Deposit complete")
+        return True
+    
+def stop_all():
+	motor1.stop()			# Turn off both motors
+	motor2.stop()	
+
+def linear_motion(speed:int):
+	## Motor 1
+	motor1.drive(1,speed)	# Turn on motor 1
+	motor1.drive(2,speed)	# Turn on motor 2
+
+	time.sleep(0.01)
+
+	## Motor 2
+	motor2.drive(1, -speed)	# Turn on motor 1
+	motor2.drive(2, -speed)	# Turn on motor 2
+
+def turn_motion(speed:int):
+	
+	## Motor 1
+	motor1.drive(1,-speed)	# Turn on motor 1
+	motor1.drive(2,speed)	# Turn on motor 2
+
+	time.sleep(0.01)
+
+	## Motor 2
+	motor2.drive(1,-speed)	# Turn on motor 1
+	motor2.drive(2,speed)	# Turn on motor 2
+
+
+motor1 = Sabertooth("/dev/serial0", baudrate = 9600, address = 129)	# Init the Motor
+motor1.open()								# Open then connection
+print(f"Connection Status: {motor1.saber.is_open}")			# Let us know if it is open
+motor1.info()								# Get the motor info
+
+
+## Init up the sabertooth 2, and open the seral connection 
+motor2 = Sabertooth("/dev/serial0", baudrate = 9600, address = 134)	# Init the Motor
+motor2.open()								# Open then connection
+print(f"Connection Status: {motor2.saber.is_open}")			# Let us know if it is open
+motor2.info()								# Get the motor info
 
 with contextlib.ExitStack() as stack:
     deviceInfos = dai.Device.getAllAvailableDevices()
@@ -236,11 +310,6 @@ with contextlib.ExitStack() as stack:
         # Output queue for imu bulk packets
         imuQueue = device.getOutputQueue(name="imu", maxSize=50, blocking=False)
 
-        baseTs = None
-        prev_gyroTs = None
-        pose = None
-        camera_position = None
-
         # Output queue will be used to get the rgb frames from the output defined above
         q_rgb = device.getOutputQueue(name="rgb", maxSize=4, blocking=False)
         stream_name = "rgb-" + mxId + "-" + eepromData.productName
@@ -254,40 +323,69 @@ with contextlib.ExitStack() as stack:
     mining = False
     depositing = False
 
-    while True:
-        pose, localizationInitializing, baseTs, prev_gyroTs, camera_position = localize(qRgbMap, imuQueue, aruco_detector, camera_matrix, dist_coeffs, marker_size, baseTs, prev_gyroTs, pose, camera_position)
-        if pose is None:
-            print("rotate to find aruco idiot")
+    baseTs = None
+    prev_gyroTs = None
+    pose = None  # Initialize pose as a list with [x, y, theta]
+    camera_position = None
 
-        waypoint = 0
+    i = 0
+    waypoint = 0
+    at_waypoint = False  # Flag to indicate if the robot has reached the current waypoint
+
+   
+
+    while True:
+
+        # Pass all required arguments to the localize function
+        pose, localizationInitializing, baseTs, prev_gyroTs, camera_position = localize(
+            qRgbMap, imuQueue, aruco_detector, marker_size, baseTs, prev_gyroTs, camera_position, pose
+        )
+        
+        if pose is None:
+            turn_motion(20)  # If pose is None, rotate to find ArUco markers
+            print("rotating to find ArUco markers...")
 
 
         if pose is not None:
-            if abs(pose[0] - WAYPOINTS[waypoint][0]) > 0.5 or abs(pose[1] - WAYPOINTS[waypoint][1]) > 0.5:
-                if not mining and not depositing:
-                    move_to(pose, WAYPOINTS[waypoint])
+            if not at_waypoint:
+                if abs(pose[0] - WAYPOINTS[waypoint][0]) > 0.5 or abs(pose[1] - WAYPOINTS[waypoint][1]) > 0.5:
+                        move_to(pose, WAYPOINTS[waypoint])
 
-                    current_time = time.time()
-                    if current_time - last_print_time >=1:
-                        print(pose)
-                        last_print_time = current_time
-                        print("Moving to waypoint")
+                        current_time = time.time()
+                        if current_time - last_print_time >= 1:
+                            print(pose)
+                            last_print_time = current_time
+                            print("Moving to waypoint")
+                
+                else:
+                    print(f"Arrived at waypoint {waypoint + 1} at position {pose}.")
+                    stop_all()
+                    at_waypoint = True  # Set flag to indicate arrival at waypoint
             
             else:
                 if WAYPOINTS[waypoint][2] == "mine":
-                    mining = True
-                    if excavate():
-                        mining = False
+                    if i == 0:
+                        initial_excavation_time = time.time()
+                        i += 1
+                        
+                    if excavate(initial_excavation_time):
+                        at_waypoint = False
                         waypoint += 1
+                        i = 0
                 
                 elif WAYPOINTS[waypoint][2] == "deposit":
-                    depositing = True
-                    if deposit():
-                        depositing = False
+                    if i == 0:
+                        initial_deposit_time = time.time()
+                        i += 1
+
+                    if deposit(initial_deposit_time):
+                        at_waypoint = False
                         waypoint += 1
-        
+                        i = 0
 
         if cv2.waitKey(1) == ord('q'):
             break
+
     cv2.destroyAllWindows()
+    stop_all()
     print(f"Final Pose: {pose}")
