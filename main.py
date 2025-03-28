@@ -106,7 +106,7 @@ def timeDeltaToMilliS(delta) -> float:
 def localize(qRgbMap, imuQueue, aruco_detector, camera_matrix, dist_coeffs, marker_size, baseTs, prev_gyroTs, pose, camera_position):
     last_print_time = time.time()  # Initialize time tracking
     localizationInitializing = True
-    for q_rgb, stream_name in qRgbMap:
+    for q_rgb, stream_name, mxId in qRgbMap:
         if q_rgb.has():
             color_image = q_rgb.get().getCvFrame()
 
@@ -244,7 +244,7 @@ with contextlib.ExitStack() as stack:
         # Output queue will be used to get the rgb frames from the output defined above
         q_rgb = device.getOutputQueue(name="rgb", maxSize=4, blocking=False)
         stream_name = "rgb-" + mxId + "-" + eepromData.productName
-        qRgbMap.append((q_rgb, stream_name))
+        qRgbMap.append((q_rgb, stream_name, mxId))
 
         # Create resizable windows for each stream
         cv2.namedWindow(stream_name, cv2.WINDOW_NORMAL)
