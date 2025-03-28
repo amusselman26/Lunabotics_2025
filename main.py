@@ -52,7 +52,7 @@ CAMERA_INFOS = {
  "14442C1071EDDFD600" : {"camera_matrix" : camera_matrix2, "dist_coeffs" : dist_coeffs2, "relative_position" : relative_position2}
 }
 
-WAYPOINTS = [[1, -2, "mine"], [1, -1, "deposit"]] # Waypoints for the robot to follow
+WAYPOINTS = [[1, -2, "mine"], [1.5, -2, "mine"], [1, -1, "deposit"]] # Waypoints for the robot to follow
 
 marker_size = 0.11
 
@@ -151,7 +151,7 @@ def localize(qRgbMap, imuQueue, aruco_detector, marker_size, baseTs, prev_gyroTs
                 corners = np.array(corners[arr])
                 ids = np.array(ids[arr])
                 # Get the center of the marker
-                center = np.mean(corners[0], axis=0).astype(int)
+                # center = np.mean(corners[0], axis=0).astype(int)
 
                 rvec, tvec, _ = my_estimatePoseSingleMarkers(corners, marker_size, camera_matrix, dist_coeffs)
 
@@ -159,7 +159,7 @@ def localize(qRgbMap, imuQueue, aruco_detector, marker_size, baseTs, prev_gyroTs
                 tvec = np.array(tvec)
 
                 # Draw the marker and axes
-                cv2.drawFrameAxes(color_image, camera_matrix, dist_coeffs, rvec, tvec, 0.1)
+                # cv2.drawFrameAxes(color_image, camera_matrix, dist_coeffs, rvec, tvec, 0.1)
                 rotation_matrix, _ = cv2.Rodrigues(rvec[0])  # Convert rotation vector to rotation matrix using the rodrigues formula
                 R_inv = rotation_matrix.T  # Inverse of the rotation matrix
                 camera_position = R_inv @ tvec[0]  # @ is the matrix multiplication operator in Python
@@ -203,12 +203,15 @@ def localize(qRgbMap, imuQueue, aruco_detector, marker_size, baseTs, prev_gyroTs
                 last_print_time = current_time  # Update last print time
 
             # Display the output image
-            cv2.imshow(stream_name, color_image)
+            # cv2.imshow(stream_name, color_image)
 
     return pose, localizationInitializing, baseTs, prev_gyroTs, camera_position
 
 def turn_to(theta):
-    turn_motion(20)  # Adjust speed as necessary for turning, 20 is an example speed
+    if pose[0][2] - theta > 180:
+         turn_left(20)
+    elif pose[0][2] - theta < -180:
+         turn_right(20)  # Adjust speed as necessary for turning, 20 is an example speed
     print(f"Turning to {theta}")
 
 def move_to(current_position, target_position):
@@ -253,7 +256,7 @@ def linear_motion(speed:int):
 	motor2.drive(1, -speed)	# Turn on motor 1
 	motor2.drive(2, -speed)	# Turn on motor 2
 
-def turn_motion(speed:int):
+def turn_left(speed:int):
 	
 	## Motor 1
 	motor1.drive(1,-speed)	# Turn on motor 1
@@ -264,6 +267,17 @@ def turn_motion(speed:int):
 	## Motor 2
 	motor2.drive(1,-speed)	# Turn on motor 1
 	motor2.drive(2,speed)	# Turn on motor 2
+
+def turn_right(speed:int):
+    	## Motor 1
+	motor1.drive(1, speed)	# Turn on motor 1
+	motor1.drive(2,-speed)	# Turn on motor 2
+
+	time.sleep(0.01)
+
+	## Motor 2
+	motor2.drive(1,speed)	# Turn on motor 1
+	motor2.drive(2,-speed)	# Turn on motor 2
 
 
 motor1 = Sabertooth("/dev/serial0", baudrate = 9600, address = 129)	# Init the Motor
@@ -278,114 +292,117 @@ motor2.open()								# Open then connection
 print(f"Connection Status: {motor2.saber.is_open}")			# Let us know if it is open
 motor2.info()								# Get the motor info
 
-with contextlib.ExitStack() as stack:
-    deviceInfos = dai.Device.getAllAvailableDevices()
-    usbSpeed = dai.UsbSpeed.SUPER
-    openVinoVersion = dai.OpenVINO.Version.VERSION_2021_4
+try:
+    with contextlib.ExitStack() as stack:
+        deviceInfos = dai.Device.getAllAvailableDevices()
+        usbSpeed = dai.UsbSpeed.SUPER
+        openVinoVersion = dai.OpenVINO.Version.VERSION_2021_4
 
-    qRgbMap = []
-    devices = []
-
-
-    for deviceInfo in deviceInfos:
-        deviceInfo: dai.DeviceInfo
-        device: dai.Device = stack.enter_context(dai.Device(openVinoVersion, deviceInfo, usbSpeed))
-        devices.append(device)
-        print("===Connected to ", deviceInfo.getMxId())
-        mxId = device.getMxId()
-        cameras = device.getConnectedCameras()
-        usbSpeed = device.getUsbSpeed()
-        eepromData = device.readCalibration2().getEepromData()
-        print("   >>> MXID:", mxId)
-        print("   >>> Num of cameras:", len(cameras))
-        print("   >>> USB speed:", usbSpeed)
-        if eepromData.boardName != "":
-            print("   >>> Board name:", eepromData.boardName)
-        if eepromData.productName != "":
-            print("   >>> Product name:", eepromData.productName)
-
-        pipeline = createPipeline()
-        device.startPipeline(pipeline)
-
-        # Output queue for imu bulk packets
-        imuQueue = device.getOutputQueue(name="imu", maxSize=50, blocking=False)
-
-        # Output queue will be used to get the rgb frames from the output defined above
-        q_rgb = device.getOutputQueue(name="rgb", maxSize=4, blocking=False)
-        stream_name = "rgb-" + mxId + "-" + eepromData.productName
-        qRgbMap.append((q_rgb, stream_name, mxId))
-
-        # Create resizable windows for each stream
-        cv2.namedWindow(stream_name, cv2.WINDOW_NORMAL)
-
-    last_print_time = time.time()
-
-    mining = False
-    depositing = False
-
-    baseTs = None
-    prev_gyroTs = None
-    pose = None  # Initialize pose as a list with [x, y, theta]
-    camera_position = None
-
-    i = 0
-    waypoint = 0
-    at_waypoint = False  # Flag to indicate if the robot has reached the current waypoint
-
-   
-
-    while True:
-
-        # Pass all required arguments to the localize function
-        pose, localizationInitializing, baseTs, prev_gyroTs, camera_position = localize(
-            qRgbMap, imuQueue, aruco_detector, marker_size, baseTs, prev_gyroTs, camera_position, pose
-        )
-        
-        if pose is None:
-            turn_motion(20)  # If pose is None, rotate to find ArUco markers
-            print("rotating to find ArUco markers...")
+        qRgbMap = []
+        devices = []
 
 
-        if pose is not None:
-            if not at_waypoint:
-                if abs(pose[0] - WAYPOINTS[waypoint][0]) > 0.5 or abs(pose[1] - WAYPOINTS[waypoint][1]) > 0.5:
-                        move_to(pose, WAYPOINTS[waypoint])
+        for deviceInfo in deviceInfos:
+            deviceInfo: dai.DeviceInfo
+            device: dai.Device = stack.enter_context(dai.Device(openVinoVersion, deviceInfo, usbSpeed))
+            devices.append(device)
+            print("===Connected to ", deviceInfo.getMxId())
+            mxId = device.getMxId()
+            cameras = device.getConnectedCameras()
+            usbSpeed = device.getUsbSpeed()
+            eepromData = device.readCalibration2().getEepromData()
+            print("   >>> MXID:", mxId)
+            print("   >>> Num of cameras:", len(cameras))
+            print("   >>> USB speed:", usbSpeed)
+            if eepromData.boardName != "":
+                print("   >>> Board name:", eepromData.boardName)
+            if eepromData.productName != "":
+                print("   >>> Product name:", eepromData.productName)
 
-                        current_time = time.time()
-                        if current_time - last_print_time >= 1:
-                            print(pose)
-                            last_print_time = current_time
-                            print("Moving to waypoint")
+            pipeline = createPipeline()
+            device.startPipeline(pipeline)
+
+            # Output queue for imu bulk packets
+            imuQueue = device.getOutputQueue(name="imu", maxSize=50, blocking=False)
+
+            # Output queue will be used to get the rgb frames from the output defined above
+            q_rgb = device.getOutputQueue(name="rgb", maxSize=4, blocking=False)
+            stream_name = "rgb-" + mxId + "-" + eepromData.productName
+            qRgbMap.append((q_rgb, stream_name, mxId))
+
+            # Create resizable windows for each stream
+            # cv2.namedWindow(stream_name, cv2.WINDOW_NORMAL)
+
+        last_print_time = time.time()
+
+        mining = False
+        depositing = False
+
+        baseTs = None
+        prev_gyroTs = None
+        pose = None  # Initialize pose as a list with [x, y, theta]
+        camera_position = None
+
+        i = 0
+        waypoint = 0
+        at_waypoint = False  # Flag to indicate if the robot has reached the current waypoint
+
+    
+
+        while True:
+
+            # Pass all required arguments to the localize function
+            pose, localizationInitializing, baseTs, prev_gyroTs, camera_position = localize(
+                qRgbMap, imuQueue, aruco_detector, marker_size, baseTs, prev_gyroTs, camera_position, pose
+            )
+            
+            if pose is None:
+                turn_left(20)  # If pose is None, rotate to find ArUco markers
+                print("rotating to find ArUco markers...")
+
+
+            if pose is not None:
+                if not at_waypoint:
+                    if abs(pose[0] - WAYPOINTS[waypoint][0]) > 0.5 or abs(pose[1] - WAYPOINTS[waypoint][1]) > 0.5:
+                            move_to(pose, WAYPOINTS[waypoint])
+
+                            current_time = time.time()
+                            if current_time - last_print_time >= 1:
+                                print(pose)
+                                last_print_time = current_time
+                                print("Moving to waypoint")
+                    
+                    else:
+                        print(f"Arrived at waypoint {waypoint + 1} at position {pose}.")
+                        stop_all()
+                        at_waypoint = True  # Set flag to indicate arrival at waypoint
                 
                 else:
-                    print(f"Arrived at waypoint {waypoint + 1} at position {pose}.")
-                    stop_all()
-                    at_waypoint = True  # Set flag to indicate arrival at waypoint
-            
-            else:
-                if WAYPOINTS[waypoint][2] == "mine":
-                    if i == 0:
-                        initial_excavation_time = time.time()
-                        i += 1
-                        
-                    if excavate(initial_excavation_time):
-                        at_waypoint = False
-                        waypoint += 1
-                        i = 0
-                
-                elif WAYPOINTS[waypoint][2] == "deposit":
-                    if i == 0:
-                        initial_deposit_time = time.time()
-                        i += 1
+                    if WAYPOINTS[waypoint][2] == "mine":
+                        if i == 0:
+                            initial_excavation_time = time.time()
+                            i += 1
+                            
+                        if excavate(initial_excavation_time):
+                            at_waypoint = False
+                            waypoint += 1
+                            i = 0
+                    
+                    elif WAYPOINTS[waypoint][2] == "deposit":
+                        if i == 0:
+                            initial_deposit_time = time.time()
+                            i += 1
 
-                    if deposit(initial_deposit_time):
-                        at_waypoint = False
-                        waypoint += 1
-                        i = 0
+                        if deposit(initial_deposit_time):
+                            at_waypoint = False
+                            waypoint += 1
+                            i = 0
 
-        if cv2.waitKey(1) == ord('q'):
-            break
+            if cv2.waitKey(1) == ord('q'):
+                break
 
-    cv2.destroyAllWindows()
-    stop_all()
-    print(f"Final Pose: {pose}")
+        # cv2.destroyAllWindows()
+        stop_all()
+        print(f"Final Pose: {pose}")
+finally:
+     stop_all()
