@@ -168,6 +168,7 @@ def localize(qRgbMap, imuQueue, aruco_detector, marker_size, baseTs, prev_gyroTs
 
                 pose = [camera_position[0][0], camera_position[2][0], theta]  # Pose in the format [x, y, theta]
                 pose = pose + np.array(CAMERA_INFOS[str(mxId)]["relative_position"])  # Adjust pose based on relative position of the camera
+                pose[2] = pose[2] % 360  # Normalize theta to be between 0 and 360 degrees
 
             elif camera_position is not None:
                 for imuPacket in imuPackets:
@@ -208,14 +209,17 @@ def localize(qRgbMap, imuQueue, aruco_detector, marker_size, baseTs, prev_gyroTs
     return pose, localizationInitializing, baseTs, prev_gyroTs, camera_position
 
 def turn_to(theta):
-    if pose[0][2] - theta > 180:
+    if pose[2] - theta > 180:
          turn_left(20)
-    elif pose[0][2] - theta < -180:
+         print(f"Turning left to {theta}")
+    elif pose[2] - theta < -180:
          turn_right(20)  # Adjust speed as necessary for turning, 20 is an example speed
-    print(f"Turning to {theta}")
+         print(f"Turning right to {theta}")
 
 def move_to(current_position, target_position):
     theta = math.degrees(math.atan2(target_position[1] - current_position[1], target_position[0] - current_position[0]))
+    theta -= 90  # Adjust for camera orientation
+    theta = theta % 360  # Normalize theta to be between 0 and 360 degrees
     if abs(current_position[2] - theta) > 5:
         turn_to(theta)
     else:
