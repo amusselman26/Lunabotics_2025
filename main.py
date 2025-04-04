@@ -240,9 +240,11 @@ def deposit(initial_time):
     deposit_time = 5
     if time.time() - initial_time < deposit_time:
         print("Depositing")
+        motor3.drive(1, 50)	# drive deposition motor
         return False
     else:
         print("Deposit complete")
+        stop_all()
         return True
     
 def stop_all():
@@ -295,6 +297,11 @@ motor2 = Sabertooth("/dev/serial0", baudrate = 9600, address = 134)	# Init the M
 motor2.open()								# Open then connection
 print(f"Connection Status: {motor2.saber.is_open}")			# Let us know if it is open
 motor2.info()								# Get the motor info
+
+motor3 = Sabertooth("/dev/serial0", baudrate = 9600, address = 128)	# Init the Motor
+motor3.open()								# Open then connection
+print(f"Connection Status: {motor3.saber.is_open}")			# Let us know if it is open
+motor3.info()								# Get the motor info
 
 try:
     with contextlib.ExitStack() as stack:
