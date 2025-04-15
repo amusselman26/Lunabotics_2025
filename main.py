@@ -5,7 +5,7 @@ import numpy as np
 import depthai as dai
 import contextlib
 import time
-import math
+import pyrealsense2 as rs  # Added RealSense library
 from pysabertooth import Sabertooth
 
 ''' TODO:
@@ -49,10 +49,12 @@ dist_coeffs2 = np.array((0.114251294509202,-0.228889968220235,0,0))
 
 CAMERA_INFOS = {
  "14442C10911DC5D200" : {"camera_matrix" : camera_matrix1, "dist_coeffs" : dist_coeffs1, "relative_position" : relative_position1},
- "14442C1071EDDFD600" : {"camera_matrix" : camera_matrix2, "dist_coeffs" : dist_coeffs2, "relative_position" : relative_position2}
+ "14442C1071EDDFD600" : {"camera_matrix" : camera_matrix2, "dist_coeffs" : dist_coeffs2, "relative_position" : relative_position2},
+ "realsense-247122073398": {"camera_matrix": camera_matrix1, "dist_coeffs": dist_coeffs1, "relative_position": relative_position1},
+ "realsense-327122073351": {"camera_matrix": camera_matrix2, "dist_coeffs": dist_coeffs2, "relative_position": relative_position2},
 }
 
-WAYPOINTS = [[1, -2, "mine"], [1.5, -2, "mine"], [1, -1, "deposit"]] # Waypoints for the robot to follow
+WAYPOINTS = [[1, -2, "mine"], [1.5, -2, "deposit"], [1, -1, "deposit"]]  # Updated waypoints
 
 marker_size = 0.11
 
@@ -125,88 +127,83 @@ def createPipeline():
 def timeDeltaToMilliS(delta) -> float:
         return delta.total_seconds() * 1000
 
-def localize(qRgbMap, imuQueue, aruco_detector, marker_size, baseTs, prev_gyroTs, camera_position, pose):
+def localize(color_images, imuQueue, aruco_detector, marker_size, baseTs, prev_gyroTs, camera_position, pose):
     last_print_time = time.time()  # Initialize time tracking
-    localizationInitializing = True
-    for q_rgb, stream_name, mxId in qRgbMap:
-        if q_rgb.has():
-            color_image = q_rgb.get().getCvFrame()
 
-            imuData = imuQueue.get()  # Blocking call, will wait until new data has arrived
-            imuPackets = imuData.packets
+    imuData = imuQueue.get()  # Blocking call, will wait until new data has arrived
+    imuPackets = imuData.packets
+    for color_image, stream_name, mxId in color_images:
+        # Convert to grayscale for ArUco detection
+        gray_image = cv2.cvtColor(color_image, cv2.COLOR_BGR2GRAY)
 
-            # Convert to grayscale for ArUco detection
-            gray_image = cv2.cvtColor(color_image, cv2.COLOR_BGR2GRAY)
+        # Detect ArUco markers
+        corners, ids, _ = aruco_detector.detectMarkers(gray_image)
 
-            # Detect ArUco markers
-            corners, ids, _ = aruco_detector.detectMarkers(gray_image)
+        camera_matrix = CAMERA_INFOS[str(mxId)]["camera_matrix"]
+        dist_coeffs = CAMERA_INFOS[str(mxId)]["dist_coeffs"]
 
-            camera_matrix = CAMERA_INFOS[str(mxId)]["camera_matrix"]
-            dist_coeffs = CAMERA_INFOS[str(mxId)]["dist_coeffs"]
+        # Process each detected marker and get pose relative to id 2
+        if ids is not None and 2 in ids:
+            arr = np.where(ids == 2)[0][0]
+            corners = np.array(corners[arr])
+            ids = np.array(ids[arr])
+            # Get the center of the marker
+            center = np.mean(corners[0], axis=0).astype(int)
 
-            # Process each detected marker and get pose relative to id 2
-            if ids is not None and 2 in ids:
-                localizationInitializing = False
-                arr = np.where(ids == 2)[0][0]
-                corners = np.array(corners[arr])
-                ids = np.array(ids[arr])
-                # Get the center of the marker
-                # center = np.mean(corners[0], axis=0).astype(int)
+            rvec, tvec, _ = my_estimatePoseSingleMarkers(corners, marker_size, camera_matrix, dist_coeffs)
 
-                rvec, tvec, _ = my_estimatePoseSingleMarkers(corners, marker_size, camera_matrix, dist_coeffs)
+            rvec = np.array(rvec)
+            tvec = np.array(tvec)
 
-                rvec = np.array(rvec)
-                tvec = np.array(tvec)
+            # Draw the marker and axes
+            cv2.drawFrameAxes(color_image, camera_matrix, dist_coeffs, rvec, tvec, 0.1)
+            rotation_matrix, _ = cv2.Rodrigues(rvec[0])  # Convert rotation vector to rotation matrix using the rodrigues formula
+            R_inv = rotation_matrix.T  # Inverse of the rotation matrix
+            camera_position = R_inv @ tvec[0]  # @ is the matrix multiplication operator in Python
+            theta = np.arcsin(-R_inv[2][0])
+            theta = np.degrees(theta)  # Convert radians to degrees for readability
 
-                # Draw the marker and axes
-                # cv2.drawFrameAxes(color_image, camera_matrix, dist_coeffs, rvec, tvec, 0.1)
-                rotation_matrix, _ = cv2.Rodrigues(rvec[0])  # Convert rotation vector to rotation matrix using the rodrigues formula
-                R_inv = rotation_matrix.T  # Inverse of the rotation matrix
-                camera_position = R_inv @ tvec[0]  # @ is the matrix multiplication operator in Python
-                theta = np.arcsin(-R_inv[2][0])
-                theta =np.degrees(theta)  # Convert radians to degrees for readability
+            pose = [camera_position[0][0], camera_position[2][0], theta]  # Pose in the format [x, y, theta]
+            pose = pose + np.array(CAMERA_INFOS[str(mxId)]["relative_position"])  # Adjust pose based on relative position of the camera
+            pose[2] = pose[2] % 360  # Normalize theta to be between 0 and 360 degrees
 
-                pose = [camera_position[0][0], camera_position[2][0], theta]  # Pose in the format [x, y, theta]
-                pose = pose + np.array(CAMERA_INFOS[str(mxId)]["relative_position"])  # Adjust pose based on relative position of the camera
-                pose[2] = pose[2] % 360  # Normalize theta to be between 0 and 360 degrees
+        elif camera_position is not None:
+            for imuPacket in imuPackets:
+                acceleroValues = imuPacket.acceleroMeter
+                gyroValues = imuPacket.gyroscope
 
-            elif camera_position is not None:
-                for imuPacket in imuPackets:
-                    acceleroValues = imuPacket.acceleroMeter
-                    gyroValues = imuPacket.gyroscope
+                acceleroTs = acceleroValues.getTimestampDevice()
+                gyroTs = gyroValues.getTimestampDevice()
 
-                    acceleroTs = acceleroValues.getTimestampDevice()
-                    gyroTs = gyroValues.getTimestampDevice()
+                if baseTs is None:
+                    baseTs = acceleroTs if acceleroTs < gyroTs else gyroTs
+                    prev_gyroTs = gyroTs
+                    print(baseTs)
 
-                    if baseTs is None:
-                        baseTs = acceleroTs if acceleroTs < gyroTs else gyroTs
-                        prev_gyroTs = gyroTs
-                        print(baseTs)
+                acceleroTs = timeDeltaToMilliS(acceleroTs - baseTs)
+                gyroTs = timeDeltaToMilliS(gyroTs - baseTs)
 
-                    acceleroTs = timeDeltaToMilliS(acceleroTs - baseTs)
-                    gyroTs = timeDeltaToMilliS(gyroTs - baseTs)
+                imuF = "{:.06f}"
+                tsF = "{:.03f}"
 
-                    imuF = "{:.06f}"
-                    tsF = "{:.03f}"
+                # Calculate the time difference between the current and previous gyroscope readings
+                dt = (gyroTs - timeDeltaToMilliS(prev_gyroTs - baseTs)) / 1000.0  # Convert milliseconds to seconds
+                prev_gyroTs = gyroValues.getTimestampDevice()
 
-                    # Calculate the time difference between the current and previous gyroscope readings
-                    dt = (gyroTs - timeDeltaToMilliS(prev_gyroTs - baseTs)) / 1000.0  # Convert milliseconds to seconds
-                    prev_gyroTs = gyroValues.getTimestampDevice()
+                gyroValues = round(gyroValues.x, 2), round(gyroValues.y, 2), round(gyroValues.z, 2)
 
-                    gyroValues = round(gyroValues.x, 2), round(gyroValues.y, 2), round(gyroValues.z, 2)
+                # Integrate the gyroscope data to get the angles
+                pose[2] += np.degrees(gyroValues[1]) * dt  # Pitch
 
-                    # Integrate the gyroscope data to get the angles
-                    pose[2] += np.degrees(gyroValues[1]) * dt  # Pitch
+        current_time = time.time()
+        if current_time - last_print_time >= 1 and camera_position is not None:
+            print(f"Camera Position: {pose}")
+            last_print_time = current_time  # Update last print time
 
-            current_time = time.time()
-            if current_time - last_print_time >= 1 and camera_position is not None:
-                print(f"Camera Position: {pose}")
-                last_print_time = current_time  # Update last print time
+        # Display the output image
+        cv2.imshow(stream_name, color_image)
 
-            # Display the output image
-            # cv2.imshow(stream_name, color_image)
-
-    return pose, localizationInitializing, baseTs, prev_gyroTs, camera_position
+    return pose, baseTs, prev_gyroTs, camera_position
 
 def turn_to(theta):
     if pose[2] - theta > 180:
@@ -217,7 +214,7 @@ def turn_to(theta):
          print(f"Turning right to {theta}")
 
 def move_to(current_position, target_position):
-    theta = math.degrees(math.atan2(target_position[1] - current_position[1], target_position[0] - current_position[0]))
+    theta = np.degrees(np.atan2(target_position[1] - current_position[1], target_position[0] - current_position[0]))
     theta -= 90  # Adjust for camera orientation
     theta = theta % 360  # Normalize theta to be between 0 and 360 degrees
     if abs(current_position[2] - theta) > 5:
@@ -363,7 +360,7 @@ try:
         while True:
 
             # Pass all required arguments to the localize function
-            pose, localizationInitializing, baseTs, prev_gyroTs, camera_position = localize(
+            pose, baseTs, prev_gyroTs, camera_position = localize(
                 qRgbMap, imuQueue, aruco_detector, marker_size, baseTs, prev_gyroTs, camera_position, pose
             )
             
