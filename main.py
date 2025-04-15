@@ -412,5 +412,8 @@ try:
         # cv2.destroyAllWindows()
         stop_all()
         print(f"Final Pose: {pose}")
+except Exception as e:
+    print(f"An error occurred: {e}")
+    stop_all()
 finally:
      stop_all()
