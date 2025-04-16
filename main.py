@@ -30,8 +30,8 @@ camera_matrix1 = np.array([[fx1, 0, cx1],
 # Distortion coefficients for (left or right) oak-d-lite
 dist_coeffs1 = np.array((0.114251294509202,-0.228889968220235,0,0))
 
-relative_position1 = [0.145, 0, 0] # Relative position of the camera with respect to the robot base (X, Y, Theta)
-relative_position2 = [-0.145, 0, 180]  # Relative position of the camera with respect to the robot base (X, Y, Theta)
+relative_position1 = [0.145, 0, 180] # Relative position of the camera with respect to the robot base (X, Y, Theta)
+relative_position2 = [-0.145, 0, 0]  # Relative position of the camera with respect to the robot base (X, Y, Theta)
 
 # Camera intrinsic parameters for the other (left or right) oak-d-lite (assumed the same for both cameras for now (03/18/25) update when other cameras are calibrated)
 fx2 = 1515.24261837315  # Focal length x
@@ -45,13 +45,22 @@ camera_matrix2 = np.array([[fx2, 0, cx2],
 # Distortion coefficients for (left or right) oak-d-lite
 dist_coeffs2 = np.array((0.114251294509202,-0.228889968220235,0,0))
 
+# Default camera intrinsic parameters for RealSense D435i (assumed the same for both cameras for now (03/18/25) update when other cameras are calibrated)
+camera_matrix3 = np.array([[1384, 0, 960],
+                           [0, 1384, 540],
+                           [0, 0, 1]], dtype=float) 
+
+dist_coeffs3 = np.array((0, 0, 0, 0))
+
+relative_position3 = [0, 0.145, 90] # Relative position of the camera with respect to the robot base (X, Y, Theta)  
+relative_position4 = [0, -0.145, 270] # Relative position of the camera with respect to the robot base (X, Y, Theta)
 
 
 CAMERA_INFOS = {
  "14442C10911DC5D200" : {"camera_matrix" : camera_matrix1, "dist_coeffs" : dist_coeffs1, "relative_position" : relative_position1},
  "14442C1071EDDFD600" : {"camera_matrix" : camera_matrix2, "dist_coeffs" : dist_coeffs2, "relative_position" : relative_position2},
- "realsense-247122073398": {"camera_matrix": camera_matrix1, "dist_coeffs": dist_coeffs1, "relative_position": relative_position1},
- "realsense-327122073351": {"camera_matrix": camera_matrix2, "dist_coeffs": dist_coeffs2, "relative_position": relative_position2},
+ "realsense-247122073398": {"camera_matrix": camera_matrix3, "dist_coeffs": dist_coeffs3, "relative_position": relative_position3},
+ "realsense-327122073351": {"camera_matrix": camera_matrix3, "dist_coeffs": dist_coeffs3, "relative_position": relative_position4},
 }
 
 WAYPOINTS = [[1, -2, "mine"], [1.5, -2, "deposit"], [1, -1, "deposit"]]  # Updated waypoints
