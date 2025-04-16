@@ -216,10 +216,10 @@ def localize(color_images, imuQueue, aruco_detector, marker_size, baseTs, prev_g
 
 def turn_to(theta):
     if pose[2] - theta > 180:
-         turn_left(20)
+         turn_left(50)
          print(f"Turning left to {theta}")
-    elif pose[2] - theta < -180:
-         turn_right(20)  # Adjust speed as necessary for turning, 20 is an example speed
+    elif pose[2] - theta < 180:
+         turn_right(50)  # Adjust speed as necessary for turning, 20 is an example speed
          print(f"Turning right to {theta}")
 
 def move_to(current_position, target_position):
