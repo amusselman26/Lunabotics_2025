@@ -318,6 +318,11 @@ try:
         qRgbMap = []
         devices = []
 
+        realsense_pipelines = []
+        realsense_profiles = []
+
+        ctx = rs.context()
+        realSense_devices = ctx.query_devices()
 
         for deviceInfo in deviceInfos:
             deviceInfo: dai.DeviceInfo
@@ -350,6 +355,18 @@ try:
             # Create resizable windows for each stream
             # cv2.namedWindow(stream_name, cv2.WINDOW_NORMAL)
 
+        for cam_idx in range(2):  # For two RealSense cameras
+            pipeline = rs.pipeline()
+            config = rs.config()
+            serial_number = realSense_devices[cam_idx].get_info(rs.camera_info.serial_number)
+            print(f"Starting camera with serial number: {serial_number}")
+            config.enable_device(serial_number)
+            config.enable_stream(rs.stream.color, 640, 480, rs.format.bgr8, 30)
+            
+            profile = pipeline.start(config)
+            realsense_pipelines.append((pipeline, serial_number))
+            realsense_profiles.append(profile)
+
         last_print_time = time.time()
 
         mining = False
@@ -367,10 +384,25 @@ try:
     
 
         while True:
+            
+            color_images = []
+            for pipeline, serial_number in realsense_pipelines:
+                frames = pipeline.wait_for_frames()
+                color_frame = frames.get_color_frame()
+                if color_frame:
+                    color_image = np.asanyarray(color_frame.get_data())
+                    stream_name = f"realsense-{serial_number}"
+                    mxId = f"realsense-{serial_number}"  # Fake ID, update CAMERA_INFOS if needed
+                    color_images.append((color_image, stream_name, mxId))
+            
+            for q_rgb, stream_name, mxId in qRgbMap:
+                if q_rgb.has():
+                    color_image = q_rgb.get().getCvFrame()
+                    color_images.append((color_image, stream_name, mxId))
 
             # Pass all required arguments to the localize function
             pose, baseTs, prev_gyroTs, camera_position = localize(
-                qRgbMap, imuQueue, aruco_detector, marker_size, baseTs, prev_gyroTs, camera_position, pose
+                color_images, imuQueue, aruco_detector, marker_size, baseTs, prev_gyroTs, camera_position, pose
             )
             
             if pose is None:
