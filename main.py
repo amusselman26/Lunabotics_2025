@@ -7,6 +7,7 @@ import contextlib
 import time
 import pyrealsense2 as rs  # Added RealSense library
 from pysabertooth import Sabertooth
+import linearactuator as LA
 
 ''' TODO:
 1. check theta returned from aruco detection is accurate
@@ -63,7 +64,7 @@ CAMERA_INFOS = {
  "realsense-327122073351": {"camera_matrix": camera_matrix3, "dist_coeffs": dist_coeffs3, "relative_position": relative_position4},
 }
 
-WAYPOINTS = [[1, -2, "mine"], [1.5, -2, "deposit"], [1, -1, "deposit"]]  # Updated waypoints
+WAYPOINTS = [[50, -2, "mine"], [1.5, -2, "deposit"], [1, -1, "deposit"]]  # Updated waypoints
 
 marker_size = 0.11
 
@@ -143,7 +144,10 @@ def localize(color_images, imuQueue, aruco_detector, marker_size, baseTs, prev_g
     imuPackets = imuData.packets
     for color_image, stream_name, mxId in color_images:
         # Convert to grayscale for ArUco detection
-        gray_image = cv2.cvtColor(color_image, cv2.COLOR_BGR2GRAY)
+        if mxId == "realsense-247122073398" or mxId == "realsense-327122073351":
+            gray_image = color_image
+        else:
+            gray_image = cv2.cvtColor(color_image, cv2.COLOR_BGR2GRAY)
 
         # Detect ArUco markers
         corners, ids, _ = aruco_detector.detectMarkers(gray_image)
@@ -217,13 +221,13 @@ def localize(color_images, imuQueue, aruco_detector, marker_size, baseTs, prev_g
 def turn_to(theta):
     if pose[2] - theta > 180:
          turn_left(50)
-         print(f"Turning left to {theta}")
+         #print(f"Turning left to {theta}")
     elif pose[2] - theta < 180:
          turn_right(50)  # Adjust speed as necessary for turning, 20 is an example speed
-         print(f"Turning right to {theta}")
+         #print(f"Turning right to {theta}")
 
 def move_to(current_position, target_position):
-    theta = np.degrees(np.atan2(target_position[1] - current_position[1], target_position[0] - current_position[0]))
+    theta = np.degrees(np.arctan2(target_position[1] - current_position[1], target_position[0] - current_position[0]))
     theta -= 90  # Adjust for camera orientation
     theta = theta % 360  # Normalize theta to be between 0 and 360 degrees
     if abs(current_position[2] - theta) > 5:
@@ -234,19 +238,36 @@ def move_to(current_position, target_position):
 
 
 def excavate(initial_time):
-    excavate_time = 5  # Duration of excavation in seconds
-    if time.time() - initial_time < excavate_time:
-        print("Excavating")
+    lowering_time = 5  # Duration of lowering trencher in seconds
+    excavate_time = 10  # Duration of excavation in seconds
+    raising_time = 5  # Duration of raising trencher in seconds
+    if time.time() - initial_time < lowering_time:
+        print("Lowering trencher")
+        LA.move(-1)  # Lower the trencher
         return False  # Excavation is still in progress
+    elif time.time() - initial_time < (lowering_time + excavate_time):
+         LA.stop()
+         construction_motors.drive(1, 100)
+         construction_motors.drive(2, 10)
+         linear_motion(10)  # Move forward while excavating
+         print("Excavating")
+         return False
+    elif time.time() - initial_time < (lowering_time + excavate_time + raising_time):
+         print("Raising trencher")
+         LA.move(1)  # Raise the trencher
+         construction_motors.drive(1, 50)  # continue the excavation motor to deposit remaining regolith
     else: 
         print("Excavation complete")
+        LA.stop()
+        construction_motors.drive(1, 0)  # Stop the excavation motor
+        construction_motors.drive(2, 0)  # Stop the deposition motor
         return True 
-
+    
 def deposit(initial_time):
     deposit_time = 5
     if time.time() - initial_time < deposit_time:
         print("Depositing")
-        motor3.drive(1, 50)	# drive deposition motor
+        construction_motors.drive(1, 50)	# drive deposition motor
         return False
     else:
         print("Deposit complete")
@@ -266,7 +287,7 @@ def linear_motion(speed:int):
 
 	## Motor 2
 	motor2.drive(1, -speed)	# Turn on motor 1
-	motor2.drive(2, -speed)	# Turn on motor 2
+	motor2.drive(2, -speed)	# Turn orealsense-247122073398"n motor 2
 
 def turn_left(speed:int):
 	
@@ -292,23 +313,24 @@ def turn_right(speed:int):
 	motor2.drive(2,-speed)	# Turn on motor 2
 
 
-motor1 = Sabertooth("/dev/serial0", baudrate = 9600, address = 129)	# Init the Motor
+motor1 = Sabertooth("/dev/ttyAMA10", baudrate = 9600, address = 129)	# Init the Motor
 motor1.open()								# Open then connection
 print(f"Connection Status: {motor1.saber.is_open}")			# Let us know if it is open
 motor1.info()								# Get the motor info
 
 
 ## Init up the sabertooth 2, and open the seral connection 
-motor2 = Sabertooth("/dev/serial0", baudrate = 9600, address = 134)	# Init the Motor
+motor2 = Sabertooth("/dev/ttyAMA10", baudrate = 9600, address = 134)	# Init the Motor
 motor2.open()								# Open then connection
 print(f"Connection Status: {motor2.saber.is_open}")			# Let us know if it is open
 motor2.info()								# Get the motor info
 
-motor3 = Sabertooth("/dev/serial0", baudrate = 9600, address = 128)	# Init the Motor
-motor3.open()								# Open then connection
-print(f"Connection Status: {motor3.saber.is_open}")			# Let us know if it is open
-motor3.info()								# Get the motor info
+construction_motors = Sabertooth("/dev/ttyAMA10", baudrate = 9600, address = 128)	# Init the Motor
+construction_motors.open()								# Open then connection
+print(f"Connection Status: {construction_motors.saber.is_open}")			# Let us know if it is open
+construction_motors.info()								# Get the motor info
 
+LA = LA.linearactuator.linearactuator()		# Init the linear actuator
 try:
     with contextlib.ExitStack() as stack:
         deviceInfos = dai.Device.getAllAvailableDevices()
@@ -361,11 +383,16 @@ try:
             serial_number = realSense_devices[cam_idx].get_info(rs.camera_info.serial_number)
             print(f"Starting camera with serial number: {serial_number}")
             config.enable_device(serial_number)
-            config.enable_stream(rs.stream.color, 640, 480, rs.format.bgr8, 30)
-            
+            config.enable_stream(rs.stream.infrared, 1, 640, 480, rs.format.y8, 30)
             profile = pipeline.start(config)
+            device = profile.get_device()
+            depth_sensor = device.first_depth_sensor()
+            depth_sensor.set_option(rs.option.emitter_enabled, 0)
+            
+        
             realsense_pipelines.append((pipeline, serial_number))
             realsense_profiles.append(profile)
+        
 
         last_print_time = time.time()
 
@@ -388,12 +415,13 @@ try:
             color_images = []
             for pipeline, serial_number in realsense_pipelines:
                 frames = pipeline.wait_for_frames()
-                color_frame = frames.get_color_frame()
+                color_frame = frames.get_infrared_frame()
                 if color_frame:
                     color_image = np.asanyarray(color_frame.get_data())
                     stream_name = f"realsense-{serial_number}"
                     mxId = f"realsense-{serial_number}"  # Fake ID, update CAMERA_INFOS if needed
                     color_images.append((color_image, stream_name, mxId))
+                    cv2.imshow(stream_name, color_image)
             
             for q_rgb, stream_name, mxId in qRgbMap:
                 if q_rgb.has():
@@ -407,7 +435,7 @@ try:
             
             if pose is None:
                 turn_left(20)  # If pose is None, rotate to find ArUco markers
-                print("rotating to find ArUco markers...")
+                #print("rotating to find ArUco markers...")
 
 
             if pose is not None:
