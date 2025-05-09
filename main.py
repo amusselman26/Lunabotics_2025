@@ -7,6 +7,7 @@ import contextlib
 import time
 import pyrealsense2 as rs  # Added RealSense library
 from pysabertooth import Sabertooth
+import linearactuator
 
 ''' TODO:
 1. check theta returned from aruco detection is accurate
@@ -46,11 +47,11 @@ camera_matrix2 = np.array([[fx2, 0, cx2],
 dist_coeffs2 = np.array((0.114251294509202,-0.228889968220235,0,0))
 
 # Default camera intrinsic parameters for RealSense D435i (assumed the same for both cameras for now (03/18/25) update when other cameras are calibrated)
-camera_matrix3 = np.array([[1384, 0, 960],
-                           [0, 1384, 540],
+camera_matrix3 = np.array([[393.5204, 0, 323.4011],
+                           [0, 394.0078, 241.6593],
                            [0, 0, 1]], dtype=float) 
 
-dist_coeffs3 = np.array((0, 0, 0, 0))
+dist_coeffs3 = np.array((0.0336912966737621, -0.0348868802582473, 0, 0))
 
 relative_position3 = [0, 0.145, 90] # Relative position of the camera with respect to the robot base (X, Y, Theta)  
 relative_position4 = [0, -0.145, 270] # Relative position of the camera with respect to the robot base (X, Y, Theta)
@@ -234,19 +235,36 @@ def move_to(current_position, target_position):
 
 
 def excavate(initial_time):
-    excavate_time = 5  # Duration of excavation in seconds
-    if time.time() - initial_time < excavate_time:
-        print("Excavating")
+    lowering_time = 5  # Duration of lowering trencher in seconds
+    excavate_time = 10  # Duration of excavation in seconds
+    raising_time = 5  # Duration of raising trencher in seconds
+    if time.time() - initial_time < lowering_time:
+        print("Lowering trencher")
+        LA.move(-1)  # Lower the trencher
         return False  # Excavation is still in progress
+    elif time.time() - initial_time < (lowering_time + excavate_time):
+         LA.stop()
+         construction_motors.drive(1, 100)
+         construction_motors.drive(2, 10)
+         linear_motion(10)  # Move forward while excavating
+         print("Excavating")
+         return False
+    elif time.time() - initial_time < (lowering_time + excavate_time + raising_time):
+         print("Raising trencher")
+         LA.move(1)  # Raise the trencher
+         construction_motors.drive(1, 50)  # continue the excavation motor to deposit remaining regolith
     else: 
         print("Excavation complete")
+        LA.stop()
+        construction_motors.drive(1, 0)  # Stop the excavation motor
+        construction_motors.drive(2, 0)  # Stop the deposition motor
         return True 
 
 def deposit(initial_time):
     deposit_time = 5
     if time.time() - initial_time < deposit_time:
         print("Depositing")
-        motor3.drive(1, 50)	# drive deposition motor
+        construction_motors.drive(1, 50)	# drive deposition motor
         return False
     else:
         print("Deposit complete")
@@ -261,8 +279,6 @@ def linear_motion(speed:int):
 	## Motor 1
 	motor1.drive(1,speed)	# Turn on motor 1
 	motor1.drive(2,speed)	# Turn on motor 2
-
-	time.sleep(0.01)
 
 	## Motor 2
 	motor2.drive(1, -speed)	# Turn on motor 1
@@ -304,10 +320,12 @@ motor2.open()								# Open then connection
 print(f"Connection Status: {motor2.saber.is_open}")			# Let us know if it is open
 motor2.info()								# Get the motor info
 
-motor3 = Sabertooth("/dev/serial0", baudrate = 9600, address = 128)	# Init the Motor
-motor3.open()								# Open then connection
-print(f"Connection Status: {motor3.saber.is_open}")			# Let us know if it is open
-motor3.info()								# Get the motor info
+construction_motors = Sabertooth("/dev/serial0", baudrate = 9600, address = 128)	# Init the Motor
+construction_motors.open()								# Open then connection
+print(f"Connection Status: {construction_motors.saber.is_open}")			# Let us know if it is open
+construction_motors.info()								# Get the motor info
+
+LA = linearactuator.linearactuator()		# Init the linear actuator
 
 try:
     with contextlib.ExitStack() as stack:
