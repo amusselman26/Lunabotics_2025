@@ -67,6 +67,8 @@ CAMERA_INFOS = {
 
 WAYPOINTS = [[50, -2, "mine"], [1.5, -2, "deposit"], [1, -1, "deposit"]]  # Updated waypoints
 
+ENCODER_POSITIONS = [0, 0, 0, 0]  # Encoder positions for each wheel (FL, FR, BL, BR)
+
 marker_size = 0.11
 
 def my_estimatePoseSingleMarkers(corners, marker_size, mtx, distortion):
@@ -158,6 +160,7 @@ def localize(color_images, imuQueue, aruco_detector, marker_size, baseTs, prev_g
 
         # Process each detected marker and get pose relative to id 2
         if ids is not None and 2 in ids:
+            ENCODER_POSITIONS = [0, 0, 0, 0]  # Reset encoder positions when ArUco marker is detected
             arr = np.where(ids == 2)[0][0]
             corners = np.array(corners[arr])
             ids = np.array(ids[arr])
@@ -196,9 +199,6 @@ def localize(color_images, imuQueue, aruco_detector, marker_size, baseTs, prev_g
                 acceleroTs = timeDeltaToMilliS(acceleroTs - baseTs)
                 gyroTs = timeDeltaToMilliS(gyroTs - baseTs)
 
-                imuF = "{:.06f}"
-                tsF = "{:.03f}"
-
                 # Calculate the time difference between the current and previous gyroscope readings
                 dt = (gyroTs - timeDeltaToMilliS(prev_gyroTs - baseTs)) / 1000.0  # Convert milliseconds to seconds
                 prev_gyroTs = gyroValues.getTimestampDevice()
@@ -208,9 +208,13 @@ def localize(color_images, imuQueue, aruco_detector, marker_size, baseTs, prev_g
                 # this would probably be better to read encoders when move function is called. but lazy for now
                     vars = {'enc_FL': 0, 'enc_FR': 0, 'enc_BL': 0, 'enc_BR': 0}
                     can.read_can(vars) # read can messages from the queue
-                    average_encoder = (vars['enc_FL'] + vars['enc_FR'] + vars['enc_BL'] + vars['enc_BR']) / 4
+                    if ENCODER_POSITIONS == [0, 0, 0, 0]: # if encoders are not set, set them to the current values
+                        initial_encoder_positions = [vars['enc_FL'], vars['enc_FR'], vars['enc_BL'], vars['enc_BR']]
+                        ENCODER_POSITIONS = initial_encoder_positions
+                    encoder_delta = [vars['enc_FL'] - ENCODER_POSITIONS[0], vars['enc_FR'] - ENCODER_POSITIONS[1], vars['enc_BL'] - ENCODER_POSITIONS[2], vars['enc_BR'] - ENCODER_POSITIONS[3]]
                     # Update the pose based on the average encoder value
-                    distance = average_encoder / 256 * 0.254 # convert to meters (256 counts per revolution, 0.254 m circumference)
+                    average_encoder = np.mean(encoder_delta)  # Average of the encoder values
+                    distance = average_encoder / 256 * 0.254 * 0.9 # convert to meters (256 counts per revolution, 0.254 m circumference, 10% slippage))
                     pose[0] += distance * np.sin(np.radians(pose[2]))  # Update x position
                     pose[1] += distance * np.cos(np.radians(pose[2]))  # Update y position
                      
@@ -416,8 +420,6 @@ try:
         waypoint = 0
         at_waypoint = False  # Flag to indicate if the robot has reached the current waypoint
 
-    
-
         while True:
             
             color_images = []
@@ -468,7 +470,7 @@ try:
                             initial_excavation_time = time.time()
                             i += 1
                             
-                        if excavate(initial_excavation_time):
+                        elif excavate(initial_excavation_time):
                             at_waypoint = False
                             waypoint += 1
                             i = 0
@@ -478,7 +480,7 @@ try:
                             initial_deposit_time = time.time()
                             i += 1
 
-                        if deposit(initial_deposit_time):
+                        elif deposit(initial_deposit_time):
                             at_waypoint = False
                             waypoint += 1
                             i = 0
