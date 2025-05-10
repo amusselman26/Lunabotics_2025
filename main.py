@@ -8,6 +8,7 @@ import time
 import pyrealsense2 as rs  # Added RealSense library
 from pysabertooth import Sabertooth
 import linearactuator as LA
+import cancancan as can
 
 ''' TODO:
 1. check theta returned from aruco detection is accurate
@@ -161,7 +162,6 @@ def localize(color_images, imuQueue, aruco_detector, marker_size, baseTs, prev_g
             corners = np.array(corners[arr])
             ids = np.array(ids[arr])
             # Get the center of the marker
-            center = np.mean(corners[0], axis=0).astype(int)
 
             rvec, tvec, _ = my_estimatePoseSingleMarkers(corners, marker_size, camera_matrix, dist_coeffs)
 
@@ -204,7 +204,16 @@ def localize(color_images, imuQueue, aruco_detector, marker_size, baseTs, prev_g
                 prev_gyroTs = gyroValues.getTimestampDevice()
 
                 gyroValues = round(gyroValues.x, 2), round(gyroValues.y, 2), round(gyroValues.z, 2)
-
+                if abs(np.degrees(gyroValues[1])) < 4: # if rover is not turning, and aruco not detected, read encoders
+                # this would probably be better to read encoders when move function is called. but lazy for now
+                    vars = {'enc_FL': 0, 'enc_FR': 0, 'enc_BL': 0, 'enc_BR': 0}
+                    can.read_can(vars) # read can messages from the queue
+                    average_encoder = (vars['enc_FL'] + vars['enc_FR'] + vars['enc_BL'] + vars['enc_BR']) / 4
+                    # Update the pose based on the average encoder value
+                    distance = average_encoder / 256 * 0.254 # convert to meters (256 counts per revolution, 0.254 m circumference)
+                    pose[0] += distance * np.sin(np.radians(pose[2]))  # Update x position
+                    pose[1] += distance * np.cos(np.radians(pose[2]))  # Update y position
+                     
                 # Integrate the gyroscope data to get the angles
                 pose[2] += np.degrees(gyroValues[1]) * dt  # Pitch
 
@@ -218,20 +227,19 @@ def localize(color_images, imuQueue, aruco_detector, marker_size, baseTs, prev_g
 
     return pose, baseTs, prev_gyroTs, camera_position
 
-def turn_to(theta):
-    if pose[2] - theta > 180:
-         turn_left(50)
-         #print(f"Turning left to {theta}")
-    elif pose[2] - theta < 180:
-         turn_right(50)  # Adjust speed as necessary for turning, 20 is an example speed
-         #print(f"Turning right to {theta}")
+def turn_to(theta, pose):
+    delta_theta = (theta - pose[2] + 360) % 360
+    if delta_theta > 180:
+        turn_left(50)
+    else:
+        turn_right(50)
 
 def move_to(current_position, target_position):
     theta = np.degrees(np.arctan2(target_position[1] - current_position[1], target_position[0] - current_position[0]))
     theta -= 90  # Adjust for camera orientation
     theta = theta % 360  # Normalize theta to be between 0 and 360 degrees
     if abs(current_position[2] - theta) > 5:
-        turn_to(theta)
+        turn_to(theta, current_position)
     else:
         linear_motion(20)
         print("Moving forward")
