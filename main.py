@@ -218,20 +218,19 @@ def localize(color_images, imuQueue, aruco_detector, marker_size, baseTs, prev_g
 
     return pose, baseTs, prev_gyroTs, camera_position
 
-def turn_to(theta):
-    if pose[2] - theta > 180:
-         turn_left(50)
-         #print(f"Turning left to {theta}")
-    elif pose[2] - theta < 180:
-         turn_right(50)  # Adjust speed as necessary for turning, 20 is an example speed
-         #print(f"Turning right to {theta}")
+def turn_to(theta, pose):
+    # Calculate the shortest turning direction
+    delta_theta = (theta - pose[2] + 360) % 360  # Normalize to [0, 360)
+    if delta_theta > 180:
+        # Turn left if the shortest path is counterclockwise
+        turn_left(50)
+    else:
+        # Turn right if the shortest path is clockwise
+        turn_right(50)
 
-def move_to(current_position, target_position):
-    theta = np.degrees(np.arctan2(target_position[1] - current_position[1], target_position[0] - current_position[0]))
-    theta -= 90  # Adjust for camera orientation
-    theta = theta % 360  # Normalize theta to be between 0 and 360 degrees
+def move_to(current_position, theta):
     if abs(current_position[2] - theta) > 5:
-        turn_to(theta)
+        turn_to(theta, current_position)
     else:
         linear_motion(20)
         print("Moving forward")
@@ -393,20 +392,18 @@ try:
             realsense_pipelines.append((pipeline, serial_number))
             realsense_profiles.append(profile)
         
-
         last_print_time = time.time()
 
         mining = False
         depositing = False
-
         baseTs = None
         prev_gyroTs = None
         pose = None  # Initialize pose as a list with [x, y, theta]
         camera_position = None
-
         i = 0
         waypoint = 0
-        at_waypoint = False  # Flag to indicate if the robot has reached the current waypoint
+        at_waypoint = False  # Flag to indicate if the robot has reached the current waypoint\
+        initially_turning = True  # Flag to indicate if the robot is initially turning , determines whether to scan for obstacles or not
 
     
 
@@ -438,10 +435,35 @@ try:
                 #print("rotating to find ArUco markers...")
 
 
-            if pose is not None:
+            if pose:
                 if not at_waypoint:
-                    if abs(pose[0] - WAYPOINTS[waypoint][0]) > 0.5 or abs(pose[1] - WAYPOINTS[waypoint][1]) > 0.5:
-                            move_to(pose, WAYPOINTS[waypoint])
+                    target_y = WAYPOINTS[waypoint][1]
+                    target_x = WAYPOINTS[waypoint][0]
+                    current_y = pose[1]
+                    current_x = pose[0]
+                    current_theta = pose[2]
+                    target_theta = np.degrees(np.arctan2(target_y - current_y, target_x - current_x))
+                    target_theta -= 90  # Adjust for camera orientation
+                    target_theta = target_theta % 360  # Normalize theta to be between 0 and 360 degre
+
+                    if abs(current_x - target_x) > 0.5 or abs(current_y - target_y) > 0.5:
+                            if initially_turning and abs(current_theta - target_theta) > 2:
+                                turn_to(target_theta, pose)
+                            elif initially_turning and abs(current_theta - target_theta) <= 2:
+                                distances_to_obstacle = scan_function(num_scans)
+                                if distances_to_obstacle[0] == None:
+                                    print("No obstacles detected, moving to waypoint")
+                                    initially_turning = False
+                                else:
+                                    waypoint_x = current_x + (distances_to_obstacle[0] - 0.5) * np.sin(np.radians(current_theta))
+                                    waypoint_y = current_y + (distances_to_obstacle[0] - 0.5) * np.cos(np.radians(current_theta))
+                                    WAYPOINTS.insert(waypoint - 1, [waypoint_x, waypoint_y, "obstacle"])
+                                    print(f"Obstacle detected, moving to waypoint {waypoint + 1} at {WAYPOINTS[waypoint - 1]}")
+                                    waypoint -= 1
+                                    initially_turning = False
+                            
+                            else:
+                                move_to(pose, target_theta)
 
                             current_time = time.time()
                             if current_time - last_print_time >= 1:
@@ -474,10 +496,56 @@ try:
                             at_waypoint = False
                             waypoint += 1
                             i = 0
+                    
+                    elif WAYPOINTS[waypoint][2] == "obstacle":
+                        if i == 0:
+                            turn_angle = current_theta + 90 # turn 90 degrees
+                            i += 1
+                        elif abs(current_theta - turn_angle) >= 2 and i == 1: # turn to the right
+                            turn_to(turn_angle, pose)
+                        
+                        elif abs(current_theta - turn_angle) < 2 and i == 1:
+                            obstacle_distances = scan_function(twice)
+                            i += 1
 
-            if cv2.waitKey(1) == ord('q'):
-                break
+                        elif i == 2:
+                            if obstacle_distances[0] == None:
+                                move_direction = 1 # we gonna move forward
+                            
+                            elif obstacle_distances[1] == None:
+                                move_direction = -1 # we gonna move backward
 
+                            elif obstacle_distances[1] > obstacle_distances[0] and obstacle_distances[1] > 0.5:
+                                move_direction = 1 # we gonna move forward
+
+                            elif obstacle_distances[0] > obstacle_distances[1] and obstacle_distances[0] > 0.5:
+                                move_direction = -1 # we gonna move backward
+                            
+                            else:
+                                print("Chat, we are cooked.")
+                                break
+                            
+                            waypoint_x = current_x + move_direction * 0.5 * np.cos(np.radians(current_theta))
+                            waypoint_y = current_y + move_direction * 0.5 * np.sin(np.radians(current_theta))
+                            i += 1
+                        
+                        elif i ==3:
+                            if move_direction == 1 and abs(current_x - waypoint_x) > 0.1 and abs(current_y - waypoint_y) > 0.5:
+                                linear_motion(20)
+                                print("Avoiding obstacle")
+                            
+                            elif move_direction == -1 and abs(current_x - waypoint_x) > 0.1 and abs(current_y - waypoint_y) > 0.5:
+                                linear_motion(-20)
+                                print("Avoiding obstacle")
+                            
+                            else:
+                                print(f"Avoided obstacle, moving to waypoint {waypoint + 1} at {WAYPOINTS[waypoint]}.")
+                                stop_all()
+                                at_waypoint = False
+                                i = 0
+                                waypoint += 1
+
+                            
         # cv2.destroyAllWindows()
         stop_all()
         print(f"Final Pose: {pose}")
