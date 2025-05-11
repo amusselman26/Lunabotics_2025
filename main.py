@@ -8,6 +8,7 @@ import time
 import pyrealsense2 as rs  # Added RealSense library
 from pysabertooth import Sabertooth
 import linearactuator as LA
+import obstDistCheckNoRGB2 as scan
 
 ''' TODO:
 1. check theta returned from aruco detection is accurate
@@ -56,6 +57,7 @@ dist_coeffs3 = np.array((0, 0, 0, 0))
 relative_position3 = [0, 0.145, 90] # Relative position of the camera with respect to the robot base (X, Y, Theta)  
 relative_position4 = [0, -0.145, 270] # Relative position of the camera with respect to the robot base (X, Y, Theta)
 
+CAMERAS = [] # this can be incorporated with the other stuff but i am so gosh darn tired right now
 
 CAMERA_INFOS = {
  "14442C10911DC5D200" : {"camera_matrix" : camera_matrix1, "dist_coeffs" : dist_coeffs1, "relative_position" : relative_position1},
@@ -380,15 +382,23 @@ try:
             pipeline = rs.pipeline()
             config = rs.config()
             serial_number = realSense_devices[cam_idx].get_info(rs.camera_info.serial_number)
+            device_serial = serial_number # change this later *yawn*
             print(f"Starting camera with serial number: {serial_number}")
             config.enable_device(serial_number)
             config.enable_stream(rs.stream.infrared, 1, 640, 480, rs.format.y8, 30)
+            config.enable_stream(rs.stream.depth, 1, 640, 480, rs.format.z16, 30)
             profile = pipeline.start(config)
             device = profile.get_device()
             depth_sensor = device.first_depth_sensor()
             depth_sensor.set_option(rs.option.emitter_enabled, 0)
-            
-        
+            camera = {
+                "pipeline": pipeline,
+                "config": config,
+                "device_serial": device_serial,
+                "is_running": True
+                }
+
+            CAMERAS.append(camera)
             realsense_pipelines.append((pipeline, serial_number))
             realsense_profiles.append(profile)
         
@@ -450,13 +460,13 @@ try:
                             if initially_turning and abs(current_theta - target_theta) > 2:
                                 turn_to(target_theta, pose)
                             elif initially_turning and abs(current_theta - target_theta) <= 2:
-                                distances_to_obstacle = scan_function(num_scans)
-                                if distances_to_obstacle[0] == None:
+                                front_distance_to_obstacle = scan.detect_obstacles(247122073398, cameras=CAMERAS)
+                                if front_distance_to_obstacle == None:
                                     print("No obstacles detected, moving to waypoint")
                                     initially_turning = False
                                 else:
-                                    waypoint_x = current_x + (distances_to_obstacle[0] - 0.5) * np.sin(np.radians(current_theta))
-                                    waypoint_y = current_y + (distances_to_obstacle[0] - 0.5) * np.cos(np.radians(current_theta))
+                                    waypoint_x = current_x + (front_distance_to_obstacle - 0.5) * np.sin(np.radians(current_theta))
+                                    waypoint_y = current_y + (front_distance_to_obstacle - 0.5) * np.cos(np.radians(current_theta))
                                     WAYPOINTS.insert(waypoint - 1, [waypoint_x, waypoint_y, "obstacle"])
                                     print(f"Obstacle detected, moving to waypoint {waypoint + 1} at {WAYPOINTS[waypoint - 1]}")
                                     waypoint -= 1
@@ -505,20 +515,21 @@ try:
                             turn_to(turn_angle, pose)
                         
                         elif abs(current_theta - turn_angle) < 2 and i == 1:
-                            obstacle_distances = scan_function(twice)
+                            front_distance_to_obstacle = scan.detect_obstacles(247122073398, cameras=CAMERAS)
+                            rear_distance_to_obstacle = scan.detect_obstacles(327122073351, cameras=CAMERAS)
                             i += 1
 
                         elif i == 2:
-                            if obstacle_distances[0] == None:
+                            if front_distance_to_obstacle == None:
                                 move_direction = 1 # we gonna move forward
                             
-                            elif obstacle_distances[1] == None:
+                            elif rear_distance_to_obstacle == None:
                                 move_direction = -1 # we gonna move backward
 
-                            elif obstacle_distances[1] > obstacle_distances[0] and obstacle_distances[1] > 0.5:
+                            elif rear_distance_to_obstacle > front_distance_to_obstacle and front_distance_to_obstacle > 0.5:
                                 move_direction = 1 # we gonna move forward
 
-                            elif obstacle_distances[0] > obstacle_distances[1] and obstacle_distances[0] > 0.5:
+                            elif front_distance_to_obstacle > rear_distance_to_obstacle and front_distance_to_obstacle > 0.5:
                                 move_direction = -1 # we gonna move backward
                             
                             else:
