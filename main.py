@@ -8,7 +8,7 @@ import time
 import pyrealsense2 as rs  # Added RealSense library
 from pysabertooth import Sabertooth
 import linearactuator as LA
-import obstDistCheckNoRGB2 as scan
+import Lunabotics_2025.obstDistCheckNoRGB2 as scan
 
 ''' TODO:
 1. check theta returned from aruco detection is accurate
@@ -48,8 +48,8 @@ camera_matrix2 = np.array([[fx2, 0, cx2],
 dist_coeffs2 = np.array((0.114251294509202,-0.228889968220235,0,0))
 
 # Default camera intrinsic parameters for RealSense D435i (assumed the same for both cameras for now (03/18/25) update when other cameras are calibrated)
-camera_matrix3 = np.array([[1384, 0, 960],
-                           [0, 1384, 540],
+camera_matrix3 = np.array([[393.5206, 0, 323.4011],
+                           [0, 394.0078, 241.6593],
                            [0, 0, 1]], dtype=float) 
 
 dist_coeffs3 = np.array((0, 0, 0, 0))
@@ -148,8 +148,10 @@ def localize(color_images, imuQueue, aruco_detector, marker_size, baseTs, prev_g
         # Convert to grayscale for ArUco detection
         if mxId == "realsense-247122073398" or mxId == "realsense-327122073351":
             gray_image = color_image
+            scaling_factor = 1.75 # this is for a 142 mm marker
         else:
             gray_image = cv2.cvtColor(color_image, cv2.COLOR_BGR2GRAY)
+            scaling_factor = 0.71
 
         # Detect ArUco markers
         corners, ids, _ = aruco_detector.detectMarkers(gray_image)
@@ -168,7 +170,7 @@ def localize(color_images, imuQueue, aruco_detector, marker_size, baseTs, prev_g
             rvec, tvec, _ = my_estimatePoseSingleMarkers(corners, marker_size, camera_matrix, dist_coeffs)
 
             rvec = np.array(rvec)
-            tvec = np.array(tvec)
+            tvec = np.array(tvec) * scaling_factor # Scale the translation vector
 
             # Draw the marker and axes
             cv2.drawFrameAxes(color_image, camera_matrix, dist_coeffs, rvec, tvec, 0.1)

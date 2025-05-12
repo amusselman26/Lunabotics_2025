@@ -154,12 +154,8 @@ def process_camera_by_serial(device_serial=None, visualize=False, cameras=None):
         print(f"Initializing camera with serial: {device_serial}")
         camera = next((cam for cam in cameras if cam["device_serial"] == str(device_serial)), None)
         # Create point cloud (no save path)
-        if camera is None:
-            print(f"Camera with serial {camera_serial} not found in the CAMERAS list.")
-            return None
-        pcd = create_point_cloud(camera, visualize=visualize)
         
-        # Stop the camera when done
+        pcd = create_point_cloud(camera, visualize=visualize)
         
         return pcd
     

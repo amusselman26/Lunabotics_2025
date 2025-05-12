@@ -6,7 +6,7 @@ import depthai as dai
 import contextlib
 import time
 import pyrealsense2 as rs
-import Lunabotics_2025.obstDistCheckNoRGB2 as scan
+import obstDistCheckNoRGB2 as scan
 
 # Camera intrinsic parameters for RealSense D435i
 camera_matrix3 = np.array([[1384, 0, 960],
