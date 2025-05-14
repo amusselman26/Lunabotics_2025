@@ -8,17 +8,10 @@ import time
 import pyrealsense2 as rs  # Added RealSense library
 from pysabertooth import Sabertooth
 import linearactuator as LA
-import Lunabotics_2025.obstDistCheckNoRGB2 as scan
+import obstDistCheckNoRGB2 as scan
 
 ''' TODO:
-1. check theta returned from aruco detection is accurate
-2. add intrinsic parameters for all four cameras
-3. test with all four cameras
 4. add code for encoders when aruco is not detected
-5. add object detection
-6. add object detection behavior
-7. add object detection behavior to waypoints
-8. 
 '''
 # Camera intrinsic parameters (from Matlab) for (left or right) oak-d-lite
 fx1 = 1515.24261837315  # Focal length x
@@ -32,8 +25,8 @@ camera_matrix1 = np.array([[fx1, 0, cx1],
 # Distortion coefficients for (left or right) oak-d-lite
 dist_coeffs1 = np.array((0.114251294509202,-0.228889968220235,0,0))
 
-relative_position1 = [0.145, 0, 180] # Relative position of the camera with respect to the robot base (X, Y, Theta)
-relative_position2 = [-0.145, 0, 0]  # Relative position of the camera with respect to the robot base (X, Y, Theta)
+relative_position1 = [0.145, 0, 90] # Relative position of the camera with respect to the robot base (X, Y, Theta)
+relative_position2 = [-0.145, 0, 270]  # Relative position of the camera with respect to the robot base (X, Y, Theta)
 
 # Camera intrinsic parameters for the other (left or right) oak-d-lite (assumed the same for both cameras for now (03/18/25) update when other cameras are calibrated)
 fx2 = 1515.24261837315  # Focal length x
@@ -52,10 +45,10 @@ camera_matrix3 = np.array([[393.5206, 0, 323.4011],
                            [0, 394.0078, 241.6593],
                            [0, 0, 1]], dtype=float) 
 
-dist_coeffs3 = np.array((0, 0, 0, 0))
+dist_coeffs3 = np.array((0.0337, -0.0349, 0, 0))
 
-relative_position3 = [0, 0.145, 90] # Relative position of the camera with respect to the robot base (X, Y, Theta)  
-relative_position4 = [0, -0.145, 270] # Relative position of the camera with respect to the robot base (X, Y, Theta)
+relative_position3 = [0, 0.145, 180] # Relative position of the camera with respect to the robot base (X, Y, Theta)  
+relative_position4 = [0, -0.145, 0] # Relative position of the camera with respect to the robot base (X, Y, Theta)
 
 CAMERAS = [] # this can be incorporated with the other stuff but i am so gosh darn tired right now
 
@@ -66,7 +59,7 @@ CAMERA_INFOS = {
  "realsense-327122073351": {"camera_matrix": camera_matrix3, "dist_coeffs": dist_coeffs3, "relative_position": relative_position4},
 }
 
-WAYPOINTS = [[50, -2, "mine"], [1.5, -2, "deposit"], [1, -1, "deposit"]]  # Updated waypoints
+WAYPOINTS = [[1, 5, "mine"], [-1.5, 4, "deposit"], [1, -1, "deposit"]]  # Updated waypoints
 
 marker_size = 0.11
 
@@ -148,7 +141,7 @@ def localize(color_images, imuQueue, aruco_detector, marker_size, baseTs, prev_g
         # Convert to grayscale for ArUco detection
         if mxId == "realsense-247122073398" or mxId == "realsense-327122073351":
             gray_image = color_image
-            scaling_factor = 1.75 # this is for a 142 mm marker
+            scaling_factor = 1.75
         else:
             gray_image = cv2.cvtColor(color_image, cv2.COLOR_BGR2GRAY)
             scaling_factor = 0.71
@@ -158,7 +151,9 @@ def localize(color_images, imuQueue, aruco_detector, marker_size, baseTs, prev_g
 
         camera_matrix = CAMERA_INFOS[str(mxId)]["camera_matrix"]
         dist_coeffs = CAMERA_INFOS[str(mxId)]["dist_coeffs"]
-
+        if ids is None and current_position is None:
+            turn_left(30)
+            print("turning to ArUco")
         # Process each detected marker and get pose relative to id 2
         if ids is not None and 2 in ids:
             arr = np.where(ids == 2)[0][0]
@@ -170,7 +165,7 @@ def localize(color_images, imuQueue, aruco_detector, marker_size, baseTs, prev_g
             rvec, tvec, _ = my_estimatePoseSingleMarkers(corners, marker_size, camera_matrix, dist_coeffs)
 
             rvec = np.array(rvec)
-            tvec = np.array(tvec) * scaling_factor # Scale the translation vector
+            tvec = np.array(tvec) * scaling_factor
 
             # Draw the marker and axes
             cv2.drawFrameAxes(color_image, camera_matrix, dist_coeffs, rvec, tvec, 0.1)
@@ -218,27 +213,36 @@ def localize(color_images, imuQueue, aruco_detector, marker_size, baseTs, prev_g
             last_print_time = current_time  # Update last print time
 
         # Display the output image
-        cv2.imshow(stream_name, color_image)
+        #cv2.imshow(stream_name, color_image)
+        #cv2.waitKey(1)
 
     return pose, baseTs, prev_gyroTs, camera_position
 
 def turn_to(theta, pose):
     # Calculate the shortest turning direction
-    delta_theta = (theta - pose[2] + 360) % 360  # Normalize to [0, 360)
-    if delta_theta > 180:
+    delta_theta = (theta - pose[2] + 540) % 360 - 180
+    if abs(delta_theta) < 10:
+    	stop_all()
+    elif delta_theta > 0:
+        turn_right(30)  # Turn right if the shortest path is clockwise
         # Turn left if the shortest path is counterclockwise
-        turn_left(50)
     else:
-        # Turn right if the shortest path is clockwise
-        turn_right(50)
+        turn_left(30)
 
-def move_to(current_position, theta):
-    if abs(current_position[2] - theta) > 5:
-        turn_to(theta, current_position)
+def move_to(current_position, target_position):
+    dx = target_position[0] - current_position[0]
+    dy = target_position[1] - current_position[1]
+    angle_rad = np.arctan2(dy, dx)
+    angle_from_y_rad = angle_rad - np.pi / 2
+    angle_from_y_deg = np.degrees(angle_from_y_rad)
+
+    theta = angle_from_y_deg % 360
+    if abs(current_position[2] - theta) > 40:
+        turn_to(theta)
+        print(theta)
     else:
         linear_motion(20)
         print("Moving forward")
-
 
 def excavate(initial_time):
     lowering_time = 5  # Duration of lowering trencher in seconds
@@ -316,24 +320,24 @@ def turn_right(speed:int):
 	motor2.drive(2,-speed)	# Turn on motor 2
 
 
-motor1 = Sabertooth("/dev/ttyAMA10", baudrate = 9600, address = 129)	# Init the Motor
+motor1 = Sabertooth("/dev/ttyAMA0", baudrate = 9600, address = 129)	# Init the Motor
 motor1.open()								# Open then connection
 print(f"Connection Status: {motor1.saber.is_open}")			# Let us know if it is open
 motor1.info()								# Get the motor info
 
 
 ## Init up the sabertooth 2, and open the seral connection 
-motor2 = Sabertooth("/dev/ttyAMA10", baudrate = 9600, address = 134)	# Init the Motor
+motor2 = Sabertooth("/dev/ttyAMA0", baudrate = 9600, address = 134)	# Init the Motor
 motor2.open()								# Open then connection
 print(f"Connection Status: {motor2.saber.is_open}")			# Let us know if it is open
 motor2.info()								# Get the motor info
 
-construction_motors = Sabertooth("/dev/ttyAMA10", baudrate = 9600, address = 128)	# Init the Motor
+construction_motors = Sabertooth("/dev/ttyAMA0", baudrate = 9600, address = 128)	# Init the Motor
 construction_motors.open()								# Open then connection
 print(f"Connection Status: {construction_motors.saber.is_open}")			# Let us know if it is open
 construction_motors.info()								# Get the motor info
 
-LA = LA.linearactuator.linearactuator()		# Init the linear actuator
+LA = LA.linearactuator()		# Init the linear actuator
 try:
     with contextlib.ExitStack() as stack:
         deviceInfos = dai.Device.getAllAvailableDevices()
@@ -388,11 +392,11 @@ try:
             print(f"Starting camera with serial number: {serial_number}")
             config.enable_device(serial_number)
             config.enable_stream(rs.stream.infrared, 1, 640, 480, rs.format.y8, 30)
-            config.enable_stream(rs.stream.depth, 1, 640, 480, rs.format.z16, 30)
+            config.enable_stream(rs.stream.depth, 640, 480, rs.format.z16, 30)
             profile = pipeline.start(config)
             device = profile.get_device()
             depth_sensor = device.first_depth_sensor()
-            depth_sensor.set_option(rs.option.emitter_enabled, 0)
+            depth_sensor.set_option(rs.option.emitter_enabled, 1)
             camera = {
                 "pipeline": pipeline,
                 "config": config,
@@ -416,7 +420,7 @@ try:
         waypoint = 0
         at_waypoint = False  # Flag to indicate if the robot has reached the current waypoint\
         initially_turning = True  # Flag to indicate if the robot is initially turning , determines whether to scan for obstacles or not
-
+        current_position = None
     
 
         while True:
@@ -430,7 +434,6 @@ try:
                     stream_name = f"realsense-{serial_number}"
                     mxId = f"realsense-{serial_number}"  # Fake ID, update CAMERA_INFOS if needed
                     color_images.append((color_image, stream_name, mxId))
-                    cv2.imshow(stream_name, color_image)
             
             for q_rgb, stream_name, mxId in qRgbMap:
                 if q_rgb.has():
@@ -447,17 +450,22 @@ try:
                 #print("rotating to find ArUco markers...")
 
 
-            if pose:
+            elif pose is not None:
                 if not at_waypoint:
-                    target_y = WAYPOINTS[waypoint][1]
-                    target_x = WAYPOINTS[waypoint][0]
-                    current_y = pose[1]
+                    current_position = pose
+                    target_position = WAYPOINTS[waypoint]
+                    dx = target_position[0] - current_position[0]
+                    dy = target_position[1] - current_position[1]
+                    angle_rad = np.arctan2(dy, dx)
+                    angle_from_y_rad = angle_rad - np.pi / 2
+                    angle_from_y_deg = np.degrees(angle_from_y_rad)
+                    target_x = target_position[0]
+                    target_y = target_position[1]
                     current_x = pose[0]
+                    current_y = pose[1]
+                    target_theta = angle_from_y_deg % 360
                     current_theta = pose[2]
-                    target_theta = np.degrees(np.arctan2(target_y - current_y, target_x - current_x))
-                    target_theta -= 90  # Adjust for camera orientation
-                    target_theta = target_theta % 360  # Normalize theta to be between 0 and 360 degre
-
+                    print(current_x)
                     if abs(current_x - target_x) > 0.5 or abs(current_y - target_y) > 0.5:
                             if initially_turning and abs(current_theta - target_theta) > 2:
                                 turn_to(target_theta, pose)
@@ -474,8 +482,8 @@ try:
                                     waypoint -= 1
                                     initially_turning = False
                             
-                            else:
-                                move_to(pose, target_theta)
+                            elif initially_turning == False:
+                                move_to(pose, WAYPOINTS[waypoint])
 
                             current_time = time.time()
                             if current_time - last_print_time >= 1:
@@ -513,10 +521,10 @@ try:
                         if i == 0:
                             turn_angle = current_theta + 90 # turn 90 degrees
                             i += 1
-                        elif abs(current_theta - turn_angle) >= 2 and i == 1: # turn to the right
+                        elif abs(current_theta - turn_angle) >= 10 and i == 1: # turn to the right
                             turn_to(turn_angle, pose)
                         
-                        elif abs(current_theta - turn_angle) < 2 and i == 1:
+                        elif abs(current_theta - turn_angle) < 10 and i == 1:
                             front_distance_to_obstacle = scan.detect_obstacles(247122073398, cameras=CAMERAS)
                             rear_distance_to_obstacle = scan.detect_obstacles(327122073351, cameras=CAMERAS)
                             i += 1
