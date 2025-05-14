@@ -222,7 +222,7 @@ def turn_to(theta, pose):
     # Calculate the shortest turning direction
     delta_theta = (theta - pose[2] + 540) % 360 - 180
     if abs(delta_theta) < 10:
-    	stop_all()
+        stop_all()
     elif delta_theta > 0:
         turn_right(30)  # Turn right if the shortest path is clockwise
         # Turn left if the shortest path is counterclockwise
