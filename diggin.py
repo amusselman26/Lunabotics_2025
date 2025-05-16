@@ -6,7 +6,6 @@ import time
 import pyrealsense2 as rs  # Added RealSense library
 from pysabertooth import Sabertooth
 import linearactuator as LA
-import obstDistCheckNoRGB2 as scan
 
 # Canera matrix for oak-d-lite
 camera_matrix1 = np.array([[1515.24261837315, 0, 986.009156502993],
@@ -31,10 +30,12 @@ relative_position4 = [0, -0.145, 0] # Relative position of the camera with respe
 
 CAMERA_INFOS = {
  "14442C10911DC5D200" : {"camera_matrix" : camera_matrix1, "dist_coeffs" : dist_coeffs1, "relative_position" : relative_position1},
- "14442C1071EDDFD600" : {"camera_matrix" : camera_matrix2, "dist_coeffs" : dist_coeffs2, "relative_position" : relative_position2},
+ "14442C1071EDDFD600" : {"camera_matrix" : camera_matrix1, "dist_coeffs" : dist_coeffs1, "relative_position" : relative_position2},
  "realsense-247122073398": {"camera_matrix": camera_matrix3, "dist_coeffs": dist_coeffs3, "relative_position": relative_position3},
  "realsense-327122073351": {"camera_matrix": camera_matrix3, "dist_coeffs": dist_coeffs3, "relative_position": relative_position4},
 }
+
+marker_size = 0.18
 
 def my_estimatePoseSingleMarkers(corners, marker_size, mtx, distortion):
     '''
@@ -182,7 +183,7 @@ def excavate(initial_time):
          print("Raising trencher")
          LA.move(1)  # Raise the trencher
          construction_motors.drive(1, 50)  # continue the excavation motor to deposit remaining regolith
-        return False
+         return False
     else: 
         print("Excavation complete")
         LA.stop()
@@ -202,9 +203,10 @@ def deposit(initial_time):
         return True
 
 def stop_all():
-	motor1.stop()			# Turn off both motors
-	motor2.stop()	
-    motor3.stop()
+    motor1.stop()			# Turn off both motors
+    motor2.stop()
+    LA.stop()			# Stop the linear actuator
+    construction_motors.stop()
 
 def linear_motion(speed:int):
 	## Motor 1
@@ -307,40 +309,38 @@ try:
             # Create resizable windows for each stream
             # cv2.namedWindow(stream_name, cv2.WINDOW_NORMAL)
 
-        for cam_idx in range(2):  # For two RealSense cameras
-            pipeline = rs.pipeline()
-            config = rs.config()
-            serial_number = realSense_devices[cam_idx].get_info(rs.camera_info.serial_number)
-            device_serial = serial_number # change this later *yawn*
-            print(f"Starting camera with serial number: {serial_number}")
-            config.enable_device(serial_number)
-            config.enable_stream(rs.stream.infrared, 1, 640, 480, rs.format.y8, 30)
-            config.enable_stream(rs.stream.depth, 640, 480, rs.format.z16, 30)
-            profile = pipeline.start(config)
-            device = profile.get_device()
-            depth_sensor = device.first_depth_sensor()
-            depth_sensor.set_option(rs.option.emitter_enabled, 1)
-            camera = {
-                "pipeline": pipeline,
-                "config": config,
-                "device_serial": device_serial,
-                "is_running": True
-                }
+        # for cam_idx in range(2):  # For two RealSense cameras
+        #     pipeline = rs.pipeline()
+        #     config = rs.config()
+        #     serial_number = realSense_devices[cam_idx].get_info(rs.camera_info.serial_number)
+        #     device_serial = serial_number # change this later *yawn*
+        #     print(f"Starting camera with serial number: {serial_number}")
+        #     config.enable_device(serial_number)
+        #     config.enable_stream(rs.stream.infrared, 1, 640, 480, rs.format.y8, 30)
+        #     config.enable_stream(rs.stream.depth, 640, 480, rs.format.z16, 30)
+        #     profile = pipeline.start(config)
+        #     device = profile.get_device()
+        #     depth_sensor = device.first_depth_sensor()
+        #     depth_sensor.set_option(rs.option.emitter_enabled, 1)
+        #     camera = {
+        #         "pipeline": pipeline,
+        #         "config": config,
+        #         "device_serial": device_serial,
+        #         "is_running": True
+        #         }
+        #     realsense_pipelines.append((pipeline, serial_number))
+        #     realsense_profiles.append(profile)
 
-            CAMERAS.append(camera)
-            realsense_pipelines.append((pipeline, serial_number))
-            realsense_profiles.append(profile)
-
-    while true:
+    while True:
         color_images = []
-        for pipeline, serial_number in realsense_pipelines:
-            frames = pipeline.wait_for_frames()
-            color_frame = frames.get_infrared_frame()
-            if color_frame:
-                color_image = np.asanyarray(color_frame.get_data())
-                stream_name = f"realsense-{serial_number}"
-                mxId = f"realsense-{serial_number}"  # Fake ID, update CAMERA_INFOS if needed
-                color_images.append((color_image, stream_name, mxId))
+        # for pipeline, serial_number in realsense_pipelines:
+        #     frames = pipeline.wait_for_frames()
+        #     color_frame = frames.get_infrared_frame()
+        #     if color_frame:
+        #         color_image = np.asanyarray(color_frame.get_data())
+        #         stream_name = f"realsense-{serial_number}"
+        #         mxId = f"realsense-{serial_number}"  # Fake ID, update CAMERA_INFOS if needed
+        #         color_images.append((color_image, stream_name, mxId))
             
         for q_rgb, stream_name, mxId in qRgbMap:
             if q_rgb.has():
@@ -352,59 +352,67 @@ try:
             color_images, imuQueue, aruco_detector, marker_size, baseTs, prev_gyroTs, camera_position, pose
         )
 
-         x_position = pose[0]
+        distance_from_aruco = np.sqrt(pose[0]**2 + pose[1]**2)
 
         if i == 0:
             if excavate():
                 i += 1
 
-        elif i == 1 and x_position > -3.57:
+        elif i == 1 and distance_from_aruco > 0.5:
             linear_motion(-30)
 
-        elif i == 1 and x_position <= -3.57:
+        elif i == 1 and distance_from_aruco <= 0.5:
             i += 1
 
         elif i == 2:
             if deposit():
                 i += 1
 
-        elif i == 3 and x_position < -1.285:
+        elif i == 3 and distance_from_aruco < 2.5:
             linear_motion(30)
 
-        elif i == 3 and x_position >= -1.285:
+        elif i == 3 and distance_from_aruco >= 2.5:
             i += 1
 
         elif i == 4:
             if excavate():
                 i += 1
 
-        elif i == 5 and x_position > -3.57:
+        elif i == 5 and distance_from_aruco > 0.5:
             linear_motion(-30)
 
-        elif i == 5 and x_position <= -3.57:
+        elif i == 5 and distance_from_aruco <= 0.5:
             i += 1
 
         elif i == 6:
             if deposit():
                 i += 1
 
-        elif i == 7 and x_position < -1.75:
+        elif i == 7 and distance_from_aruco < 2:
             linear_motion(30)
 
-        elif i == 7 and x_position >= -1.75:
+        elif i == 7 and distance_from_aruco >= 2:
             i += 1
 
         elif i == 8:
             if excavate():
                 i += 1
 
-        elif i == 9 and x_position > -3.57:
+        elif i == 9 and distance_from_aruco > 0.5:
             linear_motion(-30)
 
-        elif i == 9 and x_position <= -3.57:
+        elif i == 9 and distance_from_aruco <= 0.5:
             i += 1
 
         else:
             deposit()
-
-            
+finally:
+    for pipeline, serial_number in realsense_pipelines:
+        pipeline.stop()
+    for device in devices:
+        device.close()
+    motor1.close()
+    motor2.close()
+    construction_motors.close()
+    stop_all()
+    cv2.destroyAllWindows()
