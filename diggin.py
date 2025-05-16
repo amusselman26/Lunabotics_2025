@@ -124,9 +124,9 @@ def localize(color_images, imuQueue, aruco_detector, marker_size, baseTs, prev_g
 
         camera_matrix = CAMERA_INFOS[str(mxId)]["camera_matrix"]
         dist_coeffs = CAMERA_INFOS[str(mxId)]["dist_coeffs"]
-        if ids is None and current_position is None:
-            turn_left(30)
-            print("turning to ArUco")
+        # if ids is None and current_position is None:
+        #     turn_left(30)
+        #     print("turning to ArUco")
         # Process each detected marker and get pose relative to id 2
         if ids is not None and 2 in ids:
             arr = np.where(ids == 2)[0][0]
@@ -284,27 +284,28 @@ try:
             devices.append(device)
             print("===Connected to ", deviceInfo.getMxId())
             mxId = device.getMxId()
-            cameras = device.getConnectedCameras()
-            usbSpeed = device.getUsbSpeed()
-            eepromData = device.readCalibration2().getEepromData()
-            print("   >>> MXID:", mxId)
-            print("   >>> Num of cameras:", len(cameras))
-            print("   >>> USB speed:", usbSpeed)
-            if eepromData.boardName != "":
-                print("   >>> Board name:", eepromData.boardName)
-            if eepromData.productName != "":
-                print("   >>> Product name:", eepromData.productName)
+            if mxId == "14442C10911DC5D200":
+                cameras = device.getConnectedCameras()
+                usbSpeed = device.getUsbSpeed()
+                eepromData = device.readCalibration2().getEepromData()
+                print("   >>> MXID:", mxId)
+                print("   >>> Num of cameras:", len(cameras))
+                print("   >>> USB speed:", usbSpeed)
+                if eepromData.boardName != "":
+                    print("   >>> Board name:", eepromData.boardName)
+                if eepromData.productName != "":
+                    print("   >>> Product name:", eepromData.productName)
 
-            pipeline = createPipeline()
-            device.startPipeline(pipeline)
+                pipeline = createPipeline()
+                device.startPipeline(pipeline)
 
-            # Output queue for imu bulk packets
-            imuQueue = device.getOutputQueue(name="imu", maxSize=50, blocking=False)
+                # Output queue for imu bulk packets
+                imuQueue = device.getOutputQueue(name="imu", maxSize=50, blocking=False)
 
-            # Output queue will be used to get the rgb frames from the output defined above
-            q_rgb = device.getOutputQueue(name="rgb", maxSize=4, blocking=False)
-            stream_name = "rgb-" + mxId + "-" + eepromData.productName
-            qRgbMap.append((q_rgb, stream_name, mxId))
+                # Output queue will be used to get the rgb frames from the output defined above
+                q_rgb = device.getOutputQueue(name="rgb", maxSize=4, blocking=False)
+                stream_name = "rgb-" + mxId + "-" + eepromData.productName
+                qRgbMap.append((q_rgb, stream_name, mxId))
 
             # Create resizable windows for each stream
             # cv2.namedWindow(stream_name, cv2.WINDOW_NORMAL)
