@@ -7,6 +7,8 @@ import pyrealsense2 as rs  # Added RealSense library
 from pysabertooth import Sabertooth
 import linearactuator as LA
 
+DEPOSITION_DISTANCE = 1
+
 # Canera matrix for oak-d-lite
 camera_matrix1 = np.array([[1515.24261837315, 0, 986.009156502993],
                            [0, 1513.21547841726, 551.618039270305],
@@ -15,8 +17,8 @@ camera_matrix1 = np.array([[1515.24261837315, 0, 986.009156502993],
 # Distortion coefficients for (left or right) oak-d-lite
 dist_coeffs1 = np.array((0.114251294509202,-0.228889968220235,0,0))
 
-relative_position1 = [0.145, 0, 90] # Relative position of the camera with respect to the robot base (X, Y, Theta)
-relative_position2 = [-0.145, 0, 270]  # Relative position of the camera with respect to the robot base (X, Y, Theta)
+relative_position1 = [0, 0, 90] # Relative position of the camera with respect to the robot base (X, Y, Theta)
+relative_position2 = [0, 0, 270]  # Relative position of the camera with respect to the robot base (X, Y, Theta)
 
 # Default camera intrinsic parameters for RealSense D435i (assumed the same for both cameras for now (03/18/25) update when other cameras are calibrated)
 camera_matrix3 = np.array([[393.5206, 0, 323.4011],
@@ -25,8 +27,8 @@ camera_matrix3 = np.array([[393.5206, 0, 323.4011],
 
 dist_coeffs3 = np.array((0.0337, -0.0349, 0, 0))
 
-relative_position3 = [0, 0.145, 180] # Relative position of the camera with respect to the robot base (X, Y, Theta)  
-relative_position4 = [0, -0.145, 0] # Relative position of the camera with respect to the robot base (X, Y, Theta)
+relative_position3 = [0, 0, 180] # Relative position of the camera with respect to the robot base (X, Y, Theta)  
+relative_position4 = [0, 0, 0] # Relative position of the camera with respect to the robot base (X, Y, Theta)
 
 CAMERA_INFOS = {
  "14442C10911DC5D200" : {"camera_matrix" : camera_matrix1, "dist_coeffs" : dist_coeffs1, "relative_position" : relative_position1},
@@ -105,11 +107,9 @@ def createPipeline():
 def timeDeltaToMilliS(delta) -> float:
         return delta.total_seconds() * 1000
 
-def localize(color_images, imuQueue, aruco_detector, marker_size, baseTs, prev_gyroTs, camera_position, pose):
+def localize(color_images, aruco_detector, marker_size, baseTs, prev_gyroTs, camera_position, pose):
     last_print_time = time.time()  # Initialize time tracking
-
-    imuData = imuQueue.get()  # Blocking call, will wait until new data has arrived
-    imuPackets = imuData.packets
+	
     for color_image, stream_name, mxId in color_images:
         # Convert to grayscale for ArUco detection
         if mxId == "realsense-247122073398" or mxId == "realsense-327122073351":
@@ -135,7 +135,7 @@ def localize(color_images, imuQueue, aruco_detector, marker_size, baseTs, prev_g
             # Get the center of the marker
             center = np.mean(corners[0], axis=0).astype(int)
 
-            rvec, tvec, _ = my_estimatePoseSingleMarkers(corners, marker_size, camera_matrix, dist_coeffs)
+            rvec, tvec = my_estimatePoseSingleMarkers(corners, marker_size, camera_matrix, dist_coeffs)
 
             rvec = np.array(rvec)
             tvec = np.array(tvec) * scaling_factor
@@ -152,6 +152,8 @@ def localize(color_images, imuQueue, aruco_detector, marker_size, baseTs, prev_g
             pose = pose + np.array(CAMERA_INFOS[str(mxId)]["relative_position"])  # Adjust pose based on relative position of the camera
             pose[2] = pose[2] % 360  # Normalize theta to be between 0 and 360 degrees
 
+	else:
+	    pass
         current_time = time.time()
         if current_time - last_print_time >= 1 and camera_position is not None:
             print(f"Camera Position: {pose}")
@@ -164,9 +166,9 @@ def localize(color_images, imuQueue, aruco_detector, marker_size, baseTs, prev_g
     return pose, baseTs, prev_gyroTs, camera_position
 
 def excavate(initial_time):
-    lowering_time = 5  # Duration of lowering trencher in seconds
-    excavate_time = 10  # Duration of excavation in seconds
-    raising_time = 5  # Duration of raising trencher in seconds
+    lowering_time = 2  # Duration of lowering trencher in seconds
+    excavate_time = 8  # Duration of excavation in seconds
+    raising_time = 2  # Duration of raising trencher in seconds
     if time.time() - initial_time < lowering_time:
         print("Lowering trencher")
         construction_motors.drive(1, 100)
@@ -182,7 +184,7 @@ def excavate(initial_time):
     elif time.time() - initial_time < (lowering_time + excavate_time + raising_time):
          print("Raising trencher")
          LA.move(1)  # Raise the trencher
-         construction_motors.drive(1, 50)  # continue the excavation motor to deposit remaining regolith
+         construction_motors.drive(1, 100)  # continue the excavation motor to deposit remaining regolith
          return False
     else: 
         print("Excavation complete")
@@ -192,10 +194,10 @@ def excavate(initial_time):
         return True 
 
 def deposit(initial_time):
-    deposit_time = 5
+    deposit_time = 10
     if time.time() - initial_time < deposit_time:
         print("Depositing")
-        construction_motors.drive(1, 50)	# drive deposition motor
+        construction_motors.drive(2, 100)	# drive deposition motor
         return False
     else:
         print("Deposit complete")
@@ -219,42 +221,19 @@ def linear_motion(speed:int):
 	motor2.drive(1, -speed)	# Turn on motor 1
 	motor2.drive(2, -speed)	# Turn orealsense-247122073398"n motor 2
 
-def turn_left(speed:int):
-	
-	## Motor 1
-	motor1.drive(1,-speed)	# Turn on motor 1
-	motor1.drive(2,speed)	# Turn on motor 2
-
-	time.sleep(0.01)
-
-	## Motor 2
-	motor2.drive(1,-speed)	# Turn on motor 1
-	motor2.drive(2,speed)	# Turn on motor 2
-
-def turn_right(speed:int):
-    	## Motor 1
-	motor1.drive(1, speed)	# Turn on motor 1
-	motor1.drive(2,-speed)	# Turn on motor 2
-
-	time.sleep(0.01)
-
-	## Motor 2
-	motor2.drive(1,speed)	# Turn on motor 1
-	motor2.drive(2,-speed)	# Turn on motor 2
-
-motor1 = Sabertooth("/dev/ttyAMA0", baudrate = 9600, address = 129)	# Init the Motor
+motor1 = Sabertooth("/dev/serial0", baudrate = 9600, address = 129)	# Init the Motor
 motor1.open()								# Open then connection
 print(f"Connection Status: {motor1.saber.is_open}")			# Let us know if it is open
 motor1.info()								# Get the motor info
 
 
 ## Init up the sabertooth 2, and open the seral connection 
-motor2 = Sabertooth("/dev/ttyAMA0", baudrate = 9600, address = 134)	# Init the Motor
+motor2 = Sabertooth("/dev/serial0", baudrate = 9600, address = 134)	# Init the Motor
 motor2.open()								# Open then connection
 print(f"Connection Status: {motor2.saber.is_open}")			# Let us know if it is open
 motor2.info()								# Get the motor info
 
-construction_motors = Sabertooth("/dev/ttyAMA0", baudrate = 9600, address = 128)	# Init the Motor
+construction_motors = Sabertooth("/dev/serial0", baudrate = 9600, address = 128)	# Init the Motor
 construction_motors.open()								# Open then connection
 print(f"Connection Status: {construction_motors.saber.is_open}")			# Let us know if it is open
 construction_motors.info()								# Get the motor info
@@ -272,6 +251,10 @@ try:
 
         realsense_pipelines = []
         realsense_profiles = []
+
+	i = 0
+	pose = [0, 0, 0]
+	last_pose = None
 
         ctx = rs.context()
         realSense_devices = ctx.query_devices()
@@ -350,59 +333,72 @@ try:
 
         # Pass all required arguments to the localize function
         pose, baseTs, prev_gyroTs, camera_position = localize(
-            color_images, imuQueue, aruco_detector, marker_size, baseTs, prev_gyroTs, camera_position, pose
+            color_images, aruco_detector, marker_size, baseTs, prev_gyroTs, camera_position, pose
         )
 
+	if pose is None and last_pose is not None:
+		pose = last_pose
+	elif pose is not None:
+		last_pose = pose
+		
         distance_from_aruco = np.sqrt(pose[0]**2 + pose[1]**2)
 
         if i == 0:
-            if excavate():
-                i += 1
+	    initial_time = time.time()
+	    i += 1
 
-        elif i == 1 and distance_from_aruco > 0.5:
+	elif i == 1:
+            if excavate(initial_time):
+		i += 1
+
+	elif i == 2 and distance_from_aruco > DEPOSITION_DISTANCE:
             linear_motion(-30)
 
-        elif i == 1 and distance_from_aruco <= 0.5:
+        elif i == 2 and distance_from_aruco <= DEPOSITION_DISTANCE:
+	    initial_time = time.time()
             i += 1
 
-        elif i == 2:
-            if deposit():
+        elif i == 3:
+            if deposit(initial_time):
                 i += 1
 
-        elif i == 3 and distance_from_aruco < 2.5:
+        elif i == 4 and distance_from_aruco < 2.5:
             linear_motion(30)
 
-        elif i == 3 and distance_from_aruco >= 2.5:
+        elif i == 4 and distance_from_aruco >= 2.5:
+	    initial_time = time.time()
             i += 1
 
-        elif i == 4:
+        elif i == 5:
             if excavate():
                 i += 1
 
-        elif i == 5 and distance_from_aruco > 0.5:
+        elif i == 6 and distance_from_aruco > DEPOSITION_DISTANCE:
             linear_motion(-30)
 
-        elif i == 5 and distance_from_aruco <= 0.5:
+        elif i == 6 and distance_from_aruco <= DEPOSITION_DISTANCE:
+	    initial_time = time.time()
             i += 1
 
-        elif i == 6:
-            if deposit():
+        elif i == 7:
+            if deposit(initial_time):
                 i += 1
 
-        elif i == 7 and distance_from_aruco < 2:
+        elif i == 8 and distance_from_aruco < 2:
             linear_motion(30)
 
-        elif i == 7 and distance_from_aruco >= 2:
+        elif i == 8 and distance_from_aruco >= 2:
+	    initial_time = time.time()
             i += 1
 
-        elif i == 8:
-            if excavate():
+        elif i == 9:
+            if excavate(initial_time):
                 i += 1
 
-        elif i == 9 and distance_from_aruco > 0.5:
+        elif i == 10 and distance_from_aruco > DEPOSITION_DISTANCE:
             linear_motion(-30)
 
-        elif i == 9 and distance_from_aruco <= 0.5:
+        elif i == 10 and distance_from_aruco <= DEPOSITION_DISTANCE:
             i += 1
 
         else:
