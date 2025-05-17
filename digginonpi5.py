@@ -105,11 +105,11 @@ def createPipeline():
 def timeDeltaToMilliS(delta) -> float:
         return delta.total_seconds() * 1000
 
-def localize(color_images, imuQueue, aruco_detector, marker_size, baseTs, prev_gyroTs, camera_position, pose):
+def localize(color_images, aruco_detector, marker_size, baseTs, prev_gyroTs, camera_position, pose):
     last_print_time = time.time()  # Initialize time tracking
 
-    imuData = imuQueue.get()  # Blocking call, will wait until new data has arrived
-    imuPackets = imuData.packets
+    # imuData = imuQueue.get()  # Blocking call, will wait until new data has arrived
+    # imuPackets = imuData.packets
     for color_image, stream_name, mxId in color_images:
         # Convert to grayscale for ArUco detection
         if mxId == "realsense-247122073398" or mxId == "realsense-327122073351":
@@ -278,70 +278,70 @@ try:
 
         i = 0
 
-        for deviceInfo in deviceInfos:
-            deviceInfo: dai.DeviceInfo
-            device: dai.Device = stack.enter_context(dai.Device(openVinoVersion, deviceInfo, usbSpeed))
-            devices.append(device)
-            print("===Connected to ", deviceInfo.getMxId())
-            mxId = device.getMxId()
-            if mxId == "14442C10911DC5D200":
-                cameras = device.getConnectedCameras()
-                usbSpeed = device.getUsbSpeed()
-                eepromData = device.readCalibration2().getEepromData()
-                print("   >>> MXID:", mxId)
-                print("   >>> Num of cameras:", len(cameras))
-                print("   >>> USB speed:", usbSpeed)
-                if eepromData.boardName != "":
-                    print("   >>> Board name:", eepromData.boardName)
-                if eepromData.productName != "":
-                    print("   >>> Product name:", eepromData.productName)
+        # for deviceInfo in deviceInfos:
+        #     deviceInfo: dai.DeviceInfo
+        #     device: dai.Device = stack.enter_context(dai.Device(openVinoVersion, deviceInfo, usbSpeed))
+        #     devices.append(device)
+        #     print("===Connected to ", deviceInfo.getMxId())
+        #     mxId = device.getMxId()
+            # if mxId == "14442C10911DC5D200":
+            #     cameras = device.getConnectedCameras()
+            #     usbSpeed = device.getUsbSpeed()
+            #     eepromData = device.readCalibration2().getEepromData()
+            #     print("   >>> MXID:", mxId)
+            #     print("   >>> Num of cameras:", len(cameras))
+            #     print("   >>> USB speed:", usbSpeed)
+            #     if eepromData.boardName != "":
+            #         print("   >>> Board name:", eepromData.boardName)
+            #     if eepromData.productName != "":
+            #         print("   >>> Product name:", eepromData.productName)
 
-                pipeline = createPipeline()
-                device.startPipeline(pipeline)
+            #     pipeline = createPipeline()
+            #     device.startPipeline(pipeline)
 
-                # Output queue for imu bulk packets
-                imuQueue = device.getOutputQueue(name="imu", maxSize=50, blocking=False)
+            #     # Output queue for imu bulk packets
+            #     imuQueue = device.getOutputQueue(name="imu", maxSize=50, blocking=False)
 
-                # Output queue will be used to get the rgb frames from the output defined above
-                q_rgb = device.getOutputQueue(name="rgb", maxSize=4, blocking=False)
-                stream_name = "rgb-" + mxId + "-" + eepromData.productName
-                qRgbMap.append((q_rgb, stream_name, mxId))
+            #     # Output queue will be used to get the rgb frames from the output defined above
+            #     q_rgb = device.getOutputQueue(name="rgb", maxSize=4, blocking=False)
+            #     stream_name = "rgb-" + mxId + "-" + eepromData.productName
+            #     qRgbMap.append((q_rgb, stream_name, mxId))
 
             # Create resizable windows for each stream
             # cv2.namedWindow(stream_name, cv2.WINDOW_NORMAL)
 
-        # for cam_idx in range(2):  # For two RealSense cameras
-        #     pipeline = rs.pipeline()
-        #     config = rs.config()
-        #     serial_number = realSense_devices[cam_idx].get_info(rs.camera_info.serial_number)
-        #     device_serial = serial_number # change this later *yawn*
-        #     print(f"Starting camera with serial number: {serial_number}")
-        #     config.enable_device(serial_number)
-        #     config.enable_stream(rs.stream.infrared, 1, 640, 480, rs.format.y8, 30)
-        #     config.enable_stream(rs.stream.depth, 640, 480, rs.format.z16, 30)
-        #     profile = pipeline.start(config)
-        #     device = profile.get_device()
-        #     depth_sensor = device.first_depth_sensor()
-        #     depth_sensor.set_option(rs.option.emitter_enabled, 1)
-        #     camera = {
-        #         "pipeline": pipeline,
-        #         "config": config,
-        #         "device_serial": device_serial,
-        #         "is_running": True
-        #         }
-        #     realsense_pipelines.append((pipeline, serial_number))
-        #     realsense_profiles.append(profile)
+        for cam_idx in range(1):  # For two RealSense cameras
+            pipeline = rs.pipeline()
+            config = rs.config()
+            serial_number = realSense_devices[cam_idx].get_info(rs.camera_info.serial_number)
+            device_serial = serial_number # change this later *yawn*
+            print(f"Starting camera with serial number: {serial_number}")
+            config.enable_device(serial_number)
+            config.enable_stream(rs.stream.infrared, 1, 640, 480, rs.format.y8, 30)
+            config.enable_stream(rs.stream.depth, 640, 480, rs.format.z16, 30)
+            profile = pipeline.start(config)
+            device = profile.get_device()
+            depth_sensor = device.first_depth_sensor()
+            depth_sensor.set_option(rs.option.emitter_enabled, 1)
+            camera = {
+                "pipeline": pipeline,
+                "config": config,
+                "device_serial": device_serial,
+                "is_running": True
+                }
+            realsense_pipelines.append((pipeline, serial_number))
+            realsense_profiles.append(profile)
 
     while True:
         color_images = []
-        # for pipeline, serial_number in realsense_pipelines:
-        #     frames = pipeline.wait_for_frames()
-        #     color_frame = frames.get_infrared_frame()
-        #     if color_frame:
-        #         color_image = np.asanyarray(color_frame.get_data())
-        #         stream_name = f"realsense-{serial_number}"
-        #         mxId = f"realsense-{serial_number}"  # Fake ID, update CAMERA_INFOS if needed
-        #         color_images.append((color_image, stream_name, mxId))
+        for pipeline, serial_number in realsense_pipelines:
+            frames = pipeline.wait_for_frames()
+            color_frame = frames.get_infrared_frame()
+            if color_frame:
+                color_image = np.asanyarray(color_frame.get_data())
+                stream_name = f"realsense-{serial_number}"
+                mxId = f"realsense-{serial_number}"  # Fake ID, update CAMERA_INFOS if needed
+                color_images.append((color_image, stream_name, mxId))
             
         for q_rgb, stream_name, mxId in qRgbMap:
             if q_rgb.has():
@@ -350,7 +350,7 @@ try:
 
         # Pass all required arguments to the localize function
         pose, baseTs, prev_gyroTs, camera_position = localize(
-            color_images, imuQueue, aruco_detector, marker_size, baseTs, prev_gyroTs, camera_position, pose
+            color_images, aruco_detector, marker_size, baseTs, prev_gyroTs, camera_position, pose
         )
 
         distance_from_aruco = np.sqrt(pose[0]**2 + pose[1]**2)
